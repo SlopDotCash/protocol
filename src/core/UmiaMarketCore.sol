@@ -68,8 +68,9 @@ contract UmiaMarketCore is Initializable, UUPSUpgradeable, ReentrancyGuard, IUmi
     uint256 public marketCounter;
     /// @notice Number of proposals created (also the ID of the most recent proposal).
     uint256 public proposalCounter;
-    /// @notice EIP-712 domain separator, bound to this contract's address and chain.
-    bytes32 public DOMAIN_SEPARATOR;
+    /// @dev Retained in place for proxy storage compatibility; signatures use the current-chain domain.
+    /// @custom:oz-renamed-from DOMAIN_SEPARATOR
+    bytes32 private _legacyDomainSeparator;
     /// @notice Number of markets that have been created but not yet settled.
     uint256 public activeUnsettledMarketCount;
 
@@ -115,7 +116,13 @@ contract UmiaMarketCore is Initializable, UUPSUpgradeable, ReentrancyGuard, IUmi
     /// @param _hub The address of the UmiaHub contract.
     function initialize(address _hub) external initializer {
         HUB = IUmiaHub(_hub);
-        DOMAIN_SEPARATOR = keccak256(
+        _legacyDomainSeparator = DOMAIN_SEPARATOR();
+    }
+
+    /// @notice EIP-712 domain separator, bound to this contract and the current chain.
+    /// @dev Recomputed so a chain-id change cannot reuse authorizations from the prior chain.
+    function DOMAIN_SEPARATOR() public view returns (bytes32) {
+        return keccak256(
             abi.encode(DOMAIN_TYPEHASH, keccak256("UmiaMarketCore"), keccak256("1"), block.chainid, address(this))
         );
     }
@@ -132,7 +139,7 @@ contract UmiaMarketCore is Initializable, UUPSUpgradeable, ReentrancyGuard, IUmi
     /// @param signer The expected signer.
     /// @param signature The signature to verify.
     function _verifySignature(bytes32 structHash, address signer, bytes calldata signature) internal view {
-        bytes32 digest = MessageHashUtils.toTypedDataHash(DOMAIN_SEPARATOR, structHash);
+        bytes32 digest = MessageHashUtils.toTypedDataHash(DOMAIN_SEPARATOR(), structHash);
         if (!SignatureChecker.isValidSignatureNow(signer, digest, signature)) {
             revert InvalidSignature();
         }
