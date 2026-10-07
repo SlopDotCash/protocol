@@ -19,6 +19,13 @@ jobs:
           version: v1.7.1
       - name: Install pinned dependency sources
         run: python3 script/install-dependencies.py
+      - name: Restore source-specific compilation cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            out
+            cache
+          key: contracts-${{ runner.os }}-${{ matrix.suite }}-forge1.7.1-${{ hashFiles('src/**/*.sol', 'test/**/*.sol', 'script/**/*.sol', 'foundry.toml', 'foundry.lock', 'script/install-dependencies.py') }}
       - name: Run suite tests and invariants
         run: forge test --match-path 'test/${{ matrix.suite }}/*.t.sol'
   artifacts:
@@ -31,6 +38,13 @@ jobs:
           version: v1.7.1
       - name: Install pinned dependency sources
         run: python3 script/install-dependencies.py
+      - name: Restore source-specific artifact cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            out
+            cache
+          key: artifacts-${{ runner.os }}-forge1.7.1-${{ hashFiles('src/**/*.sol', 'test/mocks/MockERC20.sol', 'script/**/*.sol', 'foundry.toml', 'foundry.lock', 'script/install-dependencies.py') }}
       - name: Compile all published contracts
         run: >-
           forge build src test/mocks/MockERC20.sol

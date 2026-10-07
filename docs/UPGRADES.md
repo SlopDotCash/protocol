@@ -475,3 +475,13 @@ nothing reads them at runtime.
 Run the full cycle on Base Sepolia before any mainnet upgrade, using the real owner path (Safe,
 not the deployer EOA), so the handoff is exercised end to end. Devnet cannot stand in: it redeploys
 from scratch on every reset and never upgrades anything.
+
+## Security review migration requirements
+
+Shared market and stake escrow now resolve the original venture assets through write-once Hub records. New ventures are pinned at creation. An upgraded Hub fails closed for unpinned legacy ventures. Include `pinVentureTokens` in the upgrade transaction or complete it before resuming escrow activity. The one-argument method recovers identities from an existing immutable spot vault; for a legacy venture without a vault, the owner must pass token and money-token arrays verified independently against original creation records. Do not use an upgradeable Venture's current getters as the source of truth. Pinned entries cannot be overwritten. The two mappings consume two slots of the original 50-slot Hub gap.
+
+Pending winning payloads now block a following market until execution or expiry, including while a reversible circuit breaker is active. The execution window ends seven days after the market's snapshotted delay has elapsed from settlement. Clearing a pause does not permit overlapping proposal execution. Use UUPS upgrades preserving the market-core address and storage. A registry replacement must first finish or expire every pending payload and preserve remaining claim obligations; the unsettled-market count alone is not proof of a safe replacement.
+
+Failed-auction recovery moves unsold supply to the fixed Venture treasury and leaves bidder refunds in the CCA. An unsuccessful venture has no normal spot-based governance yet. Its recovery/relaunch therefore needs the existing trusted Hub-owner governance/executor mechanism and a reviewed transaction plan; the permissionless recovery does not grant the launcher an arbitrary withdrawal recipient.
+
+The execution path also rejects a consequential winner when a newer market already replaced its active-market pointer. This protects legacy state created before the pending-execution guard existed.

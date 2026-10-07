@@ -57,7 +57,7 @@ Dependencies are restored at the revisions in `foundry.lock`, including the nest
 2. **Trade** — The spot pool provides price discovery; `UmiaHook` routes fees and oracle observations.
 3. **Govern** — `UmiaMarketCore` runs decision markets: users split venture tokens into virtual token positions per proposal (a minimal balanceOf ledger, not full ERC-6909), trade on CPMM pools, and settle by TWAP. The winning proposal executes against the venture treasury through `GovernanceExecutor`.
 
-See [Architecture](./docs/ARCHITECTURE.md) for contract-level detail and data flows.
+See [Architecture](./docs/ARCHITECTURE.md) for contract-level detail and data flows. The [security review](./audit/SECURITY_REVIEW.md) records findings, fixes, trust assumptions and validation limits.
 
 ## Documentation
 

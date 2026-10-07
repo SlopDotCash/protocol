@@ -16,7 +16,7 @@ The three-function interface is the upgrade seam: the Hub owner can point the co
 replacement oracle implementing the same interface (see `docs/UPGRADES.md`) without changing
 `UmiaMarketCore`. `winningThresholdBps` is accepted (and validated) at `initialize` so a future
 implementation can calibrate its clamp to the same threshold settlement uses; this implementation's
-fixed per-update band does not consume it.
+fixed seed-relative slew rate does not consume it.
 
 - `initialize(proposalId, reserve0, reserve1, tradingStart, tradingEnd, winningThresholdBps)` —
   one call at market creation: validates inputs, records the seed observation, anchors
@@ -26,7 +26,7 @@ fixed per-update band does not consume it.
   within the same second, after the `tradingEnd` freeze, or for degenerate (zero) reserves — a
   degenerate interval is credited by the next well-formed update instead.
 - `calculateTWAP(proposalId, reserve0, reserve1)` — view; extrapolates the current interval at the
-  clamped price of the passed reserves.
+  full ramp and plateau toward the passed reserve price.
 
 ## Key state
 
@@ -41,16 +41,35 @@ fixed per-update band does not consume it.
 
 - `initialize` and `update` are `onlyMarketCore`.
 
-## Price clamping (truncation)
+## Elapsed-time price filter
 
-Per-update price changes are clamped to a maximum ratio of 2.5x (and minimum of 0.4x) relative to the last recorded observation. This bounds the impact of single-block price manipulation on the TWAP accumulator.
+At initialization, the oracle fixes `rate = ceil(seedPriceX112 / 40)` Q112 price units per second.
+The accepted price approaches the price actually held over each interval at this constant absolute
+rate. From the seed, a sufficiently high held target reaches approximately 2.5 times the seed after
+60 seconds. This is a linear seed-relative rate, not a compounding multiplicative band; downward
+movement uses the same absolute rate and stops at the actual target (at least one Q112 unit).
+
+The full path is integrated. With elapsed seconds `dt`, movement `d = min(abs(target - start), rate * dt)`,
+and accepted endpoint `end`, the interval area is:
 
 ```
-maxPrice = lastPrice * 5 / 2          (2.5x ceiling)
-minPrice = (lastPrice * 2 + 4) / 5    (0.4x floor, rounded up so it is never zero)
+rising:  end * dt - d^2 / (2 * rate)
+falling: end * dt + d^2 / (2 * rate)
 ```
 
-The clamped price (not the raw price) is accumulated into the cumulative sum, so even if an attacker moves the CPMM spot price by 100x in one block, the oracle only records a 2.5x move. Over multiple updates the clamp compounds, so sustained price changes still converge — only single-update spikes are bounded. Every accepted observation is saturated to `MAX_PRICE_X112 = 2^208`, so an extreme reserve ratio cannot store an observation that overflows a later update.
+These formulas include the flat target-price period after a ramp finishes. The fractional numerator
+is retained in `cumulativeRemainder`, whose denominator is always `2 * priceSlewRate`; this prevents
+rounding differences from accumulating when an interval is divided into additional updates.
+The existing `oracleStates` getter ABI is unchanged. The separate public mappings expose the rate
+and remainder. More frequent updates cannot accelerate the filter or change its cumulative area
+for the same reserve-price path. If spot returns to normal, the accepted price recovers during a
+quiet gap instead of scoring a stale clamped price over the entire gap.
+
+Raw prices and accepted endpoints are bounded to `[1, 2^208]`. Full-precision multiplication/division
+handles full-width reserves and squared movements. The maximum integrated area over the uint32
+scoring window is below `2^240`. This filter reduces short-spike influence; it does not prevent a
+well-funded trader from sustaining a manipulated price, and the rate remains an economic parameter
+that must be assessed against liquidity, market duration, and the winning threshold.
 
 ## Trading end freeze
 
