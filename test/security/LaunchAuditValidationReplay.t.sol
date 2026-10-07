@@ -25,7 +25,7 @@ contract LaunchAuditValidationReplayTest is Test {
     UmiaValidationHook hook;
     LaunchAuditValidationCCA cca;
 
-    function setUp() public {
+    function setUp() public virtual {
         verifier = new Reclaim();
         Reclaim.Witness[] memory witnesses = new Reclaim.Witness[](1);
         witnesses[0] = Reclaim.Witness(vm.addr(WITNESS_KEY), "wss://audit.example");

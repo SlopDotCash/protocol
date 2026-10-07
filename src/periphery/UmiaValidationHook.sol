@@ -239,15 +239,18 @@ contract UmiaValidationHook is IUmiaValidationHook, ValidationHookIntrospection,
         uint256 stepIndex = rawStep - 1;
         if ((_stepEnabledBitmap & (1 << stepIndex)) == 0) return;
 
+        (bool hasProofGate, bool hasPermitGate) = _stepGateKinds(stepIndex);
+        bool suppliedPermit = hookData.length != 0 && hookData[0] == 0x01;
         uint256 verifiedFrom = _verifiedFromStep[owner];
-        if (verifiedFrom != 0 && verifiedFrom <= rawStep) {
+        // An explicit permit selects its independent budget even after proof registration.
+        // Only a permit-enabled step may select this path; implicit verified bids keep zk caps.
+        if (verifiedFrom != 0 && verifiedFrom <= rawStep && !(hasPermitGate && suppliedPermit)) {
             _enforceZkCaps(owner, stepIndex, amount);
             return;
         }
 
         // Nothing configured = nothing gates the step, so the bid passes. A permit-enabled
         // step still needs its permit; a zkTLS proof would revert below.
-        (bool hasProofGate, bool hasPermitGate) = _stepGateKinds(stepIndex);
         if (!hasProofGate && !hasPermitGate) return;
 
         // The step's gate config decides which credential is required; the caller's type
@@ -259,8 +262,6 @@ contract UmiaValidationHook is IUmiaValidationHook, ValidationHookIntrospection,
             if (hasProofGate && !hasPermitGate) revert ProofRequired(stepIndex);
             revert NotVerified(owner);
         }
-
-        bool suppliedPermit = hookData[0] == 0x01;
 
         if (hasPermitGate && (!hasProofGate || suppliedPermit)) {
             // Permit payload is 0x01 || abi.encode(uint256, bytes32, uint256, bytes). Validate the
