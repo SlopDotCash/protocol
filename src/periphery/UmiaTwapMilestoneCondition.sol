@@ -57,7 +57,10 @@ contract UmiaTwapMilestoneCondition is IUmiaTwapMilestoneCondition {
     uint32 public immutable TWAP_WINDOW;
 
     constructor(uint32 twapWindow) {
-        if (twapWindow == 0) revert InvalidTwapWindow();
+        // A longer window could alias the signed cumulative delta after accumulator wrap.
+        if (twapWindow == 0 || uint256(twapWindow) * uint24(TickMath.MAX_TICK) > uint48(type(int48).max)) {
+            revert InvalidTwapWindow();
+        }
         TWAP_WINDOW = twapWindow;
     }
 

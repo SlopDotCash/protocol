@@ -60,6 +60,14 @@ contract UmiaTwapMilestoneConditionUnitTest is Test {
         new UmiaTwapMilestoneCondition(0);
     }
 
+    function test_WindowBoundPreventsAmbiguousCumulativeDelta() public {
+        uint32 maxWindow = uint32(uint48(type(int48).max) / 887272);
+        UmiaTwapMilestoneCondition c = new UmiaTwapMilestoneCondition(maxWindow);
+        assertEq(c.TWAP_WINDOW(), maxWindow);
+        vm.expectRevert(IUmiaTwapMilestoneCondition.InvalidTwapWindow.selector);
+        new UmiaTwapMilestoneCondition(maxWindow + 1);
+    }
+
     function test_Deploy_StoresWindow() public {
         UmiaTwapMilestoneCondition c = new UmiaTwapMilestoneCondition(30 minutes);
         assertEq(c.TWAP_WINDOW(), 30 minutes);

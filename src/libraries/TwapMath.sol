@@ -10,12 +10,17 @@ library TwapMath {
     /// @param window Window length in seconds; must be non-zero.
     /// @dev Solidity division truncates toward zero, which would bias the average toward +∞ for
     ///      negative deltas; the correction floors toward -∞ so the deviation budget stays symmetric.
+    ///      Callers must bound window * maximum absolute tick to type(int48).max.
     function averageTick(int48 tickCumulativeOlder, int48 tickCumulativeNewer, uint32 window)
         internal
         pure
         returns (int24 tick)
     {
-        int48 tickDelta = tickCumulativeNewer - tickCumulativeOlder;
+        int48 tickDelta;
+        // Match the oracle accumulator's modular arithmetic across signed int48 wrap.
+        unchecked {
+            tickDelta = tickCumulativeNewer - tickCumulativeOlder;
+        }
         int48 windowInt = int48(uint48(window));
         tick = int24(tickDelta / windowInt);
         if (tickDelta < 0 && tickDelta % windowInt != 0) tick--;
