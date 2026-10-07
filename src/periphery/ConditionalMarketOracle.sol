@@ -7,8 +7,12 @@ import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 
 /// @title ConditionalMarketOracle
 /// @notice Per-proposal time-weighted average of the money-per-venture price (Q112.112).
-/// @dev Each observation is clamped to within 2.5x / 0.4x of the previous one per update, bounding
-///      single-update manipulation impact on the TWAP accumulator. The oracle is registry-swappable:
+/// @dev Each observation is slew-limited against the previous one by a bound that scales with elapsed
+///      time: at most 2.5x (or 0.4x) per `CLAMP_PERIOD`, compounded per second, and unbounded once
+///      `CLAMP_HORIZON` has elapsed. A short spike therefore moves the accumulator by little, while a
+///      quiet interval lets the anchor catch up to the real price. A per-update (rather than per-time)
+///      bound would let a few back-to-back updates ratchet the anchor and keep it there for days after
+///      the pool returned to normal. The oracle is registry-swappable:
 ///      the Hub can point the core at a replacement implementation of the same interface (e.g. one
 ///      whose clamp is calibrated to `winningThresholdBps`) without touching the core.
 contract ConditionalMarketOracle is IConditionalMarketOracle {
@@ -35,6 +39,19 @@ contract ConditionalMarketOracle is IConditionalMarketOracle {
     ///      uint256 under any reserve ratio and a stored observation can never brick a later update or
     ///      settlement read. It sits far above any real money-per-venture price.
     uint256 internal constant MAX_PRICE_X112 = 1 << 208;
+
+    uint256 internal constant Q128 = 2 ** 128;
+
+    /// @dev 2.5^(1/60) in Q128.128: the per-second slew factor, i.e. 2.5x per `CLAMP_PERIOD`.
+    uint256 internal constant SLEW_PER_SECOND_Q128 = 345518876174812822257297503914797622451;
+
+    /// @dev Seconds over which the bound reaches 2.5x / 0.4x.
+    uint32 internal constant CLAMP_PERIOD = 60;
+
+    /// @dev Past this much elapsed time the bound (2.5^30, ~8.7e11x) no longer constrains any real
+    ///      price, so the observation is taken as-is. Every reserve mutation updates first, so the spot
+    ///      at update time is the price that actually held over the whole interval.
+    uint32 internal constant CLAMP_HORIZON = 30 * CLAMP_PERIOD;
 
     // ─────────────────────────────────────────────────────────
     // State
@@ -136,7 +153,7 @@ contract ConditionalMarketOracle is IConditionalMarketOracle {
 
         uint32 timeElapsed = effectiveTs - oracle.lastTimestamp;
         uint256 rawPrice0 = _reservePrice(reserve0, reserve1);
-        uint256 price0 = _clampPrice(rawPrice0, oracle.lastPrice0X112);
+        uint256 price0 = _clampPrice(rawPrice0, oracle.lastPrice0X112, timeElapsed);
         unchecked {
             oracle.price0CumulativeLast += price0 * timeElapsed;
         }
@@ -162,7 +179,7 @@ contract ConditionalMarketOracle is IConditionalMarketOracle {
         uint32 timeElapsed = effectiveTs - oracle.lastTimestamp;
         if (timeElapsed > 0 && reserve0 > 0 && reserve1 > 0) {
             uint256 rawPrice0 = _reservePrice(reserve0, reserve1);
-            uint256 price0 = _clampPrice(rawPrice0, oracle.lastPrice0X112);
+            uint256 price0 = _clampPrice(rawPrice0, oracle.lastPrice0X112, timeElapsed);
             unchecked {
                 cumulative += price0 * timeElapsed;
             }
@@ -192,15 +209,38 @@ contract ConditionalMarketOracle is IConditionalMarketOracle {
         return ts > tradingEnd ? tradingEnd : ts;
     }
 
-    /// @dev Clamps a price to at most 2.5x and at least 0.4x of the last observation, saturated to
-    ///      `MAX_PRICE_X112`. `minPrice` rounds up so the result is never zero — a zero observation
-    ///      would disable the ratio clamp. Callers pass `lastPrice >= 1` (held by `initialize`).
-    function _clampPrice(uint256 rawPrice, uint256 lastPrice) internal pure returns (uint256) {
+    /// @dev Clamps a price to within `2.5^(timeElapsed / CLAMP_PERIOD)` of the last observation (in
+    ///      either direction), saturated to `MAX_PRICE_X112`. Unbounded past `CLAMP_HORIZON`. `minPrice`
+    ///      rounds up so the result is never zero — a zero observation would disable the ratio clamp.
+    ///      Callers pass `lastPrice >= 1` (held by `initialize`) and `timeElapsed > 0`.
+    function _clampPrice(uint256 rawPrice, uint256 lastPrice, uint32 timeElapsed) internal pure returns (uint256) {
         if (rawPrice > MAX_PRICE_X112) rawPrice = MAX_PRICE_X112;
-        uint256 maxPrice = (lastPrice * 5) / 2;
-        uint256 minPrice = (lastPrice * 2 + 4) / 5;
+        if (timeElapsed >= CLAMP_HORIZON) return rawPrice == 0 ? 1 : rawPrice;
+
+        uint256 ratioQ128 = _slewRatioQ128(timeElapsed);
+        uint256 maxPrice = FullMath.mulDiv(lastPrice, ratioQ128, Q128);
+        if (maxPrice > MAX_PRICE_X112) maxPrice = MAX_PRICE_X112;
+        uint256 minPrice = FullMath.mulDivRoundingUp(lastPrice, Q128, ratioQ128);
         if (rawPrice > maxPrice) return maxPrice;
         if (rawPrice < minPrice) return minPrice;
         return rawPrice;
+    }
+
+    /// @dev `2.5^(timeElapsed / CLAMP_PERIOD)` in Q128.128. Whole periods multiply by exactly 5/2 (exact in
+    ///      Q128 for fewer than 128 periods), so the bound after one period is exactly 2.5x / 0.4x; the
+    ///      remaining seconds compound `SLEW_PER_SECOND_Q128` by binary exponentiation. `timeElapsed <
+    ///      CLAMP_HORIZON` keeps the result below 2.5^30 * Q128 (< 2^168).
+    function _slewRatioQ128(uint32 timeElapsed) internal pure returns (uint256 ratioQ128) {
+        ratioQ128 = Q128;
+        for (uint256 i = timeElapsed / CLAMP_PERIOD; i != 0; --i) {
+            ratioQ128 = (ratioQ128 * 5) / 2;
+        }
+        uint256 base = SLEW_PER_SECOND_Q128;
+        uint256 e = timeElapsed % CLAMP_PERIOD;
+        while (e != 0) {
+            if (e & 1 != 0) ratioQ128 = FullMath.mulDiv(ratioQ128, base, Q128);
+            e >>= 1;
+            if (e != 0) base = FullMath.mulDiv(base, base, Q128);
+        }
     }
 }

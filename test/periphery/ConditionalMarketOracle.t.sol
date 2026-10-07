@@ -10,8 +10,17 @@ import {IUmiaHub} from "../../src/interfaces/IUmiaHub.sol";
 contract ConditionalMarketOracleHarness is ConditionalMarketOracle {
     constructor(address _hub) ConditionalMarketOracle(_hub) {}
 
+    /// @dev One full clamp period: the bound is exactly 2.5x / 0.4x.
     function exposed_clampPrice(uint256 rawPrice, uint256 lastPrice) external pure returns (uint256) {
-        return _clampPrice(rawPrice, lastPrice);
+        return _clampPrice(rawPrice, lastPrice, 60);
+    }
+
+    function exposed_clampPrice(uint256 rawPrice, uint256 lastPrice, uint32 timeElapsed)
+        external
+        pure
+        returns (uint256)
+    {
+        return _clampPrice(rawPrice, lastPrice, timeElapsed);
     }
 }
 
@@ -291,18 +300,18 @@ contract ConditionalMarketOracleTest is Test {
     function test_update_accumulatesCumulativePrices() public {
         _init(1);
 
-        vm.warp(block.timestamp + 100);
+        vm.warp(vm.getBlockTimestamp() + 100);
         oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
 
         (uint256 cum0,,,, uint32 lastTs,) = oracle.oracleStates(1);
         assertEq(cum0, _seedPrice() * 100, "Delta cumulative should be price * timeElapsed");
-        assertEq(lastTs, uint32(block.timestamp), "lastTimestamp advanced");
+        assertEq(lastTs, uint32(vm.getBlockTimestamp()), "lastTimestamp advanced");
     }
 
     function test_update_clampsLargeJump() public {
         _init(1);
 
-        vm.warp(block.timestamp + 60);
+        vm.warp(vm.getBlockTimestamp() + 60);
 
         // 100x price change — should be clamped to 2.5x
         oracle.update(1, RESERVE_VENTURE / 100, RESERVE_USDC);
@@ -315,7 +324,7 @@ contract ConditionalMarketOracleTest is Test {
     function test_update_clampsLargeDrop() public {
         _init(1);
 
-        vm.warp(block.timestamp + 60);
+        vm.warp(vm.getBlockTimestamp() + 60);
 
         // 10x price drop — should be clamped to 0.4x
         oracle.update(1, RESERVE_VENTURE * 10, RESERVE_USDC);
@@ -326,28 +335,56 @@ contract ConditionalMarketOracleTest is Test {
     }
 
     function test_update_multiBlockManipulationBounded() public {
-        _init(1);
+        (uint32 tradingStart,) = _init(1);
         uint256 initialP0 = _seedPrice();
 
         // 10 consecutive blocks, each trying to push price up 100x
         for (uint256 i = 0; i < 10; i++) {
-            vm.warp(block.timestamp + 12);
+            vm.warp(vm.getBlockTimestamp() + 12);
             oracle.update(1, RESERVE_VENTURE / 100, RESERVE_USDC);
         }
 
-        (, uint256 finalP0,,,,) = oracle.oracleStates(1);
+        (, uint256 finalP0,,, uint32 finalTs,) = oracle.oracleStates(1);
+        assertEq(finalTs, tradingStart + 120, "All ten distinct updates advanced the oracle clock");
 
-        // Each block can increase price by at most 2.5x
-        // After N blocks of max clamping the price grows by at most 2.5^N
-        assertGt(finalP0, initialP0, "Price should increase with upward manipulation");
+        // The bound scales with elapsed time, not update count: 120s of updates allow at most
+        // 2.5^(120/60) = 6.25x however many updates land in that window.
         assertGt(finalP0, initialP0 * 2, "Multiple clamped blocks should accumulate beyond 2x");
+        assertLe(finalP0, (initialP0 * 625) / 100 + 1, "Growth bounded by 2.5x per 60s of elapsed time");
+    }
 
-        // But it should be bounded by 2.5^10 ≈ 9537x
-        uint256 maxPossible = initialP0;
-        for (uint256 i = 0; i < 10; i++) {
-            maxPossible = (maxPossible * 5) / 2;
+    /// @dev Regression: a per-update clamp let a few back-to-back updates ratchet the anchor to ~16x and
+    ///      then scored a multi-day quiet interval at 0.4x of that anchor (~6x the real price). The
+    ///      time-scaled bound must let a quiet interval catch up to the real price.
+    function test_update_spikeDoesNotPersistThroughQuietInterval() public {
+        (uint32 tradingStart, uint32 tradingEnd) = _init(1);
+        uint256 seed = _seedPrice();
+
+        // Attacker holds a 16x price for three 2-second blocks, updating every block.
+        vm.warp(uint256(tradingStart) + 1 hours);
+        oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
+        for (uint256 i = 0; i < 3; i++) {
+            vm.warp(vm.getBlockTimestamp() + 2);
+            oracle.update(1, RESERVE_VENTURE / 16, RESERVE_USDC);
         }
-        assertLe(finalP0, maxPossible, "Price growth should be bounded by 2.5^N");
+
+        (,,,, uint32 spikeEnd,) = oracle.oracleStates(1);
+        assertEq(spikeEnd, tradingStart + 1 hours + 6, "Three distinct two-second updates occurred");
+
+        // Price is restored and the pool goes quiet until the end of trading.
+        vm.warp(tradingEnd);
+        uint256 twap = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
+        assertLe(twap, (seed * 10_001) / 10_000, "A seconds-long spike must not move a 3-day TWAP by 1bp");
+    }
+
+    function test_clampPrice_boundScalesWithElapsedTime() public view {
+        uint256 lastPrice = 1000 * Q112;
+        uint256 raw = 1_000_000 * Q112;
+        assertLt(oracle.exposed_clampPrice(raw, lastPrice, 2), (lastPrice * 104) / 100, "2s allows ~3%");
+        assertEq(oracle.exposed_clampPrice(raw, lastPrice, 120), (lastPrice * 25) / 4, "120s allows exactly 6.25x");
+        assertEq(oracle.exposed_clampPrice(raw, lastPrice, 30 minutes), raw, "Past the horizon the spot is taken");
+        assertEq(oracle.exposed_clampPrice(Q112, lastPrice, 30 minutes), Q112, "Unbounded downward too");
+        assertEq(oracle.exposed_clampPrice(0, lastPrice, 30 minutes), 1, "Never zero");
     }
 
     function test_update_zeroReservesCreditedByNextUpdate() public {
@@ -467,49 +504,48 @@ contract ConditionalMarketOracleTest is Test {
 
         // Several updates with same reserves
         for (uint256 i = 0; i < 5; i++) {
-            vm.warp(block.timestamp + 1 hours);
+            vm.warp(vm.getBlockTimestamp() + 1 hours);
             oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
         }
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         uint256 twap = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
         assertEq(twap, _seedPrice(), "TWAP with constant reserves should equal the seed price");
     }
 
-    function test_twap_spikeHasLimitedImpactOnLongWindow() public {
+    function test_twap_sustainedSpikeUsesActualDuration() public {
         _init(1);
 
         uint256 basePrice = _seedPrice();
 
         // 23 hours of normal trading
         for (uint256 i = 0; i < 23; i++) {
-            vm.warp(block.timestamp + 1 hours);
+            vm.warp(vm.getBlockTimestamp() + 1 hours);
             oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
         }
 
-        // 1 hour of max-clamped spike (attacker pushes price up)
-        vm.warp(block.timestamp + 1 hours);
+        // A sustained hour at the higher price has real elapsed-time weight.
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         oracle.update(1, RESERVE_VENTURE / 100, RESERVE_USDC);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         uint256 twap = oracle.calculateTWAP(1, RESERVE_VENTURE / 100, RESERVE_USDC);
 
-        // The spike contributes at most 2.5x for 2 hours out of 25 hours total
-        // TWAP ≈ (23 * base + 1 * 2.5*base + 1 * extrapolated) / 25
-        // The TWAP deviation from base should be bounded
-        uint256 maxDeviation = (basePrice * 3) / 10; // ~30% max deviation from a 2h spike in 25h
-        uint256 deviation = twap > basePrice ? twap - basePrice : basePrice - twap;
-        assertLt(deviation, maxDeviation, "Single-hour spike should have < 30% TWAP impact over 25h");
+        // The high price actually lasted two hours. Long intervals must not retain a
+        // stale per-update cap; score precisely the price held over each interval.
+        uint256 highPrice = (RESERVE_USDC * Q112) / (RESERVE_VENTURE / 100);
+        assertEq(twap, (23 * basePrice + 2 * highPrice) / 25, "Only actual duration weights the spike");
     }
 
     function test_twap_viewExtrapolatesWithClamping() public {
         _init(1);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
 
-        // Query with wildly different reserves (simulating manipulation after last update)
-        vm.warp(block.timestamp + 1 hours);
+        // A swap checkpoints the old price before changing reserves. Query two seconds
+        // later to exercise the short-interval clamp without fabricating an hour of history.
+        vm.warp(vm.getBlockTimestamp() + 2);
         uint256 twapNormal = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
         uint256 twapManipulated = oracle.calculateTWAP(1, RESERVE_VENTURE / 100, RESERVE_USDC);
 
@@ -524,11 +560,11 @@ contract ConditionalMarketOracleTest is Test {
         _initWithReserves(1, RESERVE_VENTURE, RESERVE_USDC);
         _initWithReserves(2, RESERVE_VENTURE / 2, RESERVE_USDC);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
         oracle.update(2, RESERVE_VENTURE / 2, RESERVE_USDC);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         uint256 twap1 = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
         uint256 twap2 = oracle.calculateTWAP(2, RESERVE_VENTURE / 2, RESERVE_USDC);
 
@@ -546,17 +582,17 @@ contract ConditionalMarketOracleTest is Test {
 
         // Days 1-2: Normal trading (48 hours)
         for (uint256 i = 0; i < 48; i++) {
-            vm.warp(block.timestamp + 1 hours);
+            vm.warp(vm.getBlockTimestamp() + 1 hours);
             oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
         }
 
         // Day 3: Attacker manipulates for 24 hours, each update trying a 100x jump
         for (uint256 i = 0; i < 24; i++) {
-            vm.warp(block.timestamp + 1 hours);
+            vm.warp(vm.getBlockTimestamp() + 1 hours);
             oracle.update(1, RESERVE_VENTURE / 100, RESERVE_USDC);
         }
 
-        vm.warp(block.timestamp + 1);
+        vm.warp(vm.getBlockTimestamp() + 1);
         uint256 twap = oracle.calculateTWAP(1, RESERVE_VENTURE / 100, RESERVE_USDC);
 
         // 48h of base price + 24h of escalating clamped prices
@@ -582,7 +618,7 @@ contract ConditionalMarketOracleTest is Test {
         assertGt(lastP0, 0, "seed observation should be set even with extreme ratio");
 
         // Update should not overflow
-        vm.warp(block.timestamp + 60);
+        vm.warp(vm.getBlockTimestamp() + 60);
         oracle.update(1, bigReserve, tinyReserve);
     }
 
@@ -596,7 +632,7 @@ contract ConditionalMarketOracleTest is Test {
         _init(1);
 
         // Long gap with no trades (2 days, within the trading window)
-        vm.warp(block.timestamp + 2 days);
+        vm.warp(vm.getBlockTimestamp() + 2 days);
 
         // calculateTWAP should extrapolate the anchored observation
         uint256 twap = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
@@ -607,16 +643,17 @@ contract ConditionalMarketOracleTest is Test {
         _init(1);
 
         // 2 days of no trades
-        vm.warp(block.timestamp + 2 days);
+        vm.warp(vm.getBlockTimestamp() + 2 days);
 
-        // Now someone tries to manipulate the view by passing bad reserves
+        // The production core checkpoints the unchanged reserves before a swap.
+        oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
         uint256 twapNormal = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
-        uint256 twapBad = oracle.calculateTWAP(1, RESERVE_VENTURE / 100, RESERVE_USDC);
+        uint256 twapSameBlock = oracle.calculateTWAP(1, RESERVE_VENTURE / 100, RESERVE_USDC);
+        assertEq(twapSameBlock, twapNormal, "A new spot price cannot rewrite the preceding quiet interval");
 
-        // The whole gap is extrapolated at the passed reserves' price, but the clamp
-        // limits that price to 2.5x of the last stored observation.
-        uint256 ratio = (twapBad * 100) / twapNormal;
-        assertLe(ratio, 250, "Manipulated TWAP should be at most 2.5x normal");
+        vm.warp(vm.getBlockTimestamp() + 2);
+        uint256 twapBad = oracle.calculateTWAP(1, RESERVE_VENTURE / 100, RESERVE_USDC);
+        assertLe(twapBad, (twapNormal * 10_001) / 10_000, "Two seconds cannot rewrite two days of history");
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -626,7 +663,7 @@ contract ConditionalMarketOracleTest is Test {
     function test_twap_frozenAfterTradingEnd() public {
         (, uint32 tradingEnd) = _init(1);
 
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
 
         vm.warp(tradingEnd);
@@ -647,11 +684,11 @@ contract ConditionalMarketOracleTest is Test {
     function test_twap_normalBeforeTradingEnd() public {
         _init(1);
 
-        vm.warp(block.timestamp + 1000);
+        vm.warp(vm.getBlockTimestamp() + 1000);
         oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
         uint256 twap1 = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
 
-        vm.warp(block.timestamp + 1000);
+        vm.warp(vm.getBlockTimestamp() + 1000);
         oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
         uint256 twap2 = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
 
