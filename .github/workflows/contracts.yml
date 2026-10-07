@@ -26,6 +26,7 @@ jobs:
             out
             cache
           key: contracts-${{ runner.os }}-${{ matrix.suite }}-forge1.7.1-${{ hashFiles('src/**/*.sol', 'test/**/*.sol', 'script/**/*.sol', 'foundry.toml', 'foundry.lock', 'script/install-dependencies.py') }}
+          restore-keys: contracts-${{ runner.os }}-${{ matrix.suite }}-forge1.7.1-
       - name: Run suite tests and invariants
         run: forge test --match-path 'test/${{ matrix.suite }}/*.t.sol'
   artifacts:

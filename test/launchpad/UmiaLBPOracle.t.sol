@@ -235,15 +235,18 @@ contract UmiaLBPOracleTest is Test, PosmTestSetup {
 
     function test_DefaultBufferRetainsFullWindowAtOneWritePerSecond() public {
         bool zeroForOne = Currency.unwrap(poolKey.currency0) == address(currency);
+        uint256 start = vm.getBlockTimestamp();
         for (uint256 i = 0; i < 1801; ++i) {
-            vm.warp(block.timestamp + 1);
+            vm.warp(start + i + 1);
             _doSwap(1e12, zeroForOne);
         }
+        assertEq(vm.getBlockTimestamp(), start + 1801, "Every write uses a distinct second");
         uint32[] memory lookbacks = new uint32[](2);
         lookbacks[0] = 1800;
         (int48[] memory cumulatives,) = umiaHook.observe(poolKey, lookbacks);
         assertEq(cumulatives.length, 2);
-        (, uint16 capacity,) = umiaHook.oracleStates(poolKey.toId());
+        (uint16 index, uint16 capacity,) = umiaHook.oracleStates(poolKey.toId());
+        assertEq(index, 1801, "All writes advanced the observation ring");
         assertEq(capacity, 2048);
     }
 
