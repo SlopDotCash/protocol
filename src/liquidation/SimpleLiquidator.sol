@@ -9,12 +9,16 @@ import {IVenture} from "../interfaces/IVenture.sol";
 import {IUmiaHub} from "../interfaces/IUmiaHub.sol";
 import {GovernanceTypes} from "../libraries/GovernanceTypes.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title SimpleLiquidator
 /// @notice A simple pro-rata liquidation strategy for fungible assets.
 /// @dev Supports NATIVE and ERC20 assets only. One-time full claim.
 ///      Users burn their entire venture token balance through the venture to claim their pro-rata share.
 contract SimpleLiquidator is ILiquidator, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    error TransferFailed();
     /// @notice Thrown when the liquidator is deployed without a hub.
     error InvalidHub();
 
@@ -69,6 +73,7 @@ contract SimpleLiquidator is ILiquidator, ReentrancyGuard {
     function initialize(address _venture, GovernanceTypes.LiquidationAsset[] calldata _assets, uint256 _totalSupply)
         external
         override
+        nonReentrant
     {
         if (initialized) revert AlreadyInitialized();
         if (_venture == address(0)) revert InvalidAssetType();
@@ -104,7 +109,14 @@ contract SimpleLiquidator is ILiquidator, ReentrancyGuard {
                 continue;
             }
 
-            uint256 balance = _getAssetBalance(asset);
+            // Move backing out of the treasury before the snapshot: standing ERC20
+            // approvals granted by the venture must not be able to spend claims.
+            uint256 balance = _getAssetBalance(asset, _venture);
+            if (balance != 0) {
+                IVenture(_venture).withdraw(asset.token, address(this), balance);
+            }
+            // Account for the amount actually received, including transfer fees.
+            balance = _getAssetBalance(asset, address(this));
             _liquidationAssets.push(
                 LiquidationAssetSnapshot({
                     assetType: asset.assetType, token: asset.token, tokenId: asset.tokenId, balance: balance
@@ -140,12 +152,11 @@ contract SimpleLiquidator is ILiquidator, ReentrancyGuard {
             uint256 payout = FullMath.mulDiv(asset.balance, userBalance, totalSupplySnapshot);
             if (payout == 0) continue;
 
-            // Call Venture to withdraw this user's share
-            // Venture checks that caller is authorizedLiquidator
             if (asset.assetType == GovernanceTypes.AssetType.NATIVE) {
-                IVenture(venture).withdraw(address(0), msg.sender, payout);
+                (bool success,) = payable(msg.sender).call{value: payout}("");
+                if (!success) revert TransferFailed();
             } else {
-                IVenture(venture).withdraw(asset.token, msg.sender, payout);
+                IERC20(asset.token).safeTransfer(msg.sender, payout);
             }
         }
 
@@ -192,12 +203,18 @@ contract SimpleLiquidator is ILiquidator, ReentrancyGuard {
     // Internal Helpers
     // ─────────────────────────────────────────────────────────
 
-    function _getAssetBalance(GovernanceTypes.LiquidationAsset calldata asset) internal view returns (uint256) {
+    receive() external payable {}
+
+    function _getAssetBalance(GovernanceTypes.LiquidationAsset calldata asset, address account)
+        internal
+        view
+        returns (uint256)
+    {
         if (asset.assetType == GovernanceTypes.AssetType.NATIVE) {
-            return address(venture).balance;
+            return account.balance;
         }
         if (asset.assetType == GovernanceTypes.AssetType.ERC20) {
-            return IERC20(asset.token).balanceOf(venture);
+            return IERC20(asset.token).balanceOf(account);
         }
         // Should never reach here due to validation in initialize()
         revert InvalidAssetType();

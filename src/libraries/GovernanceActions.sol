@@ -242,10 +242,9 @@ library GovernanceActions {
     function _executeLiquidation(IVenture venture, bytes memory data) private {
         GovernanceTypes.LiquidationPlan memory params = abi.decode(data, (GovernanceTypes.LiquidationPlan));
 
-        // Liquidation does not revoke standing ERC20 allowances; setLiquidator only flips the terminal
-        // flag, after which they can no longer be cleared. The plan MUST zero every live allowance with
-        // SET_ALLOWANCE(token, spender, 0) actions ordered before this action, else a spender can drain
-        // claim-backing assets via transferFrom post-snapshot. See docs/GOVERNANCE_TREASURY_LAYER.md.
+        // SimpleLiquidator takes custody of the claim backing during initialization, isolating
+        // it from standing treasury allowances. Other strategies must provide equivalent protection
+        // or have every live asset allowance revoked before this terminal action.
         address ventureToken = venture.token();
         if (IERC20(ventureToken).totalSupply() == 0) revert InvalidParams();
 
@@ -265,12 +264,12 @@ library GovernanceActions {
             }
         }
 
-        // Snapshot the CLAIMABLE supply, not the raw total supply. Venture tokens held by the treasury
-        // itself — its redeemed LP share plus any other treasury balance — can never call claim(), so
-        // counting them in the pro-rata denominator would strand a matching fraction of every
-        // liquidation asset in the venture forever. Computed after the redemption so the freshly
-        // returned LP tokens are excluded too.
-        uint256 claimableSupply = IERC20(ventureToken).totalSupply() - IERC20(ventureToken).balanceOf(address(venture));
+        // Retire treasury-held claim tokens, including those just redeemed from the vault.
+        // Merely excluding them from the denominator leaves live tokens that a standing
+        // ERC20 approval can move into circulation after the snapshot and redeem again.
+        uint256 treasurySupply = IERC20(ventureToken).balanceOf(address(venture));
+        if (treasurySupply != 0) venture.burn(treasurySupply);
+        uint256 claimableSupply = IERC20(ventureToken).totalSupply();
         if (claimableSupply == 0) revert InvalidParams();
 
         venture.setLiquidator(params.liquidator);

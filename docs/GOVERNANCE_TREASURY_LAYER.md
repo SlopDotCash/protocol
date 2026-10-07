@@ -321,18 +321,18 @@ struct LiquidationPlan {
 Rules:
 
 - Liquidation is a terminal state: once activated, only liquidation claims are allowed.
-- The `liquidator` address points to an external `ILiquidator` contract that handles the actual distribution strategy (pro-rata, auction, etc.) while assets remain in the Venture treasury.
-- On execution, `GovernanceActions` redeems the venture's spot-LP shares into the treasury, then calls `venture.setLiquidator(liquidator)` and `ILiquidator(liquidator).initialize(venture, assets, claimableSupply)`.
+- The `liquidator` address points to an external `ILiquidator` contract that handles the distribution strategy (pro-rata, auction, etc.). `SimpleLiquidator` escrows its NATIVE/ERC20 claim backing during initialization.
+- On execution, `GovernanceActions` redeems the venture's spot-LP shares into the treasury, burns all treasury-held venture tokens, then calls `venture.setLiquidator(liquidator)` and `ILiquidator(liquidator).initialize(venture, assets, claimableSupply)`.
 - Token holders call `ILiquidator.claim()` to burn all their venture tokens and receive pro-rata shares of each asset.
-- Claims are proportional to burned venture tokens over the **claimable** supply, which excludes venture tokens held by the treasury itself (redeemed LP + any treasury balance) because those can never claim:
-  - `payout = assetBalance * burnAmount / (totalSupply - treasuryVentureBalance)`
+- Claims are proportional to burned venture tokens over the **claimable** supply, which is snapshotted after burning treasury-held venture tokens (redeemed LP + any treasury balance). Burning prevents standing approvals from recirculating excluded claim tokens:
+  - `payout = escrowedAssetBalance * burnAmount / postTreasuryBurnSupplySnapshot`
 - **Do not list the venture token in `assets`.** It is the claim-burn token, not a distributable asset; `SimpleLiquidator` skips it if listed. Paying it back out pro-rata would let a claimant recycle the payout through fresh addresses and over-draw. List the money token (and any other real treasury assets) instead.
 
-##### Mandatory: revoke standing allowances first
+##### Protect claim backing from standing allowances
 
-**Liquidation does NOT revoke standing ERC20 allowances.** `setLiquidator` only flips the terminal flag, and afterwards `setAllowance` and the whole executor path are blocked — so a stale approval can never be cleared once liquidation starts. Any spender still holding an allowance (granted via `SET_ALLOWANCE` **or** a raw `CALL` `approve`) can then `transferFrom` treasury assets directly on the token *after* the liquidator snapshots balances, draining assets that back claims and reverting later claimants.
+`SimpleLiquidator.initialize` transfers each listed native/ERC20 asset from the treasury into the liquidator and snapshots its actual received balance. Claims pay directly from that custody. Old treasury approvals therefore cannot spend the snapshotted backing. Initialization and claims share a reentrancy guard.
 
-The liquidation governance plan therefore MUST include a `SET_ALLOWANCE(token, spender, 0)` action for every live allowance, **ordered before** the `LIQUIDATE_TREASURY` action in the same plan. Actions execute in array order (`GovernanceExecutor` loops them sequentially), and `setAllowance` runs while still not liquidating, so the approvals are zeroed before `setLiquidator` runs. Enumerate live allowances from the indexed `AllowanceSet(token, spender, amount)` events (surfaced by the indexer); this is the single source of truth for what to revoke, and covers both `SET_ALLOWANCE`- and `CALL`-created approvals.
+Liquidation does not revoke treasury allowances. Revoke them before liquidation to protect omitted assets or later treasury deposits. Other liquidator strategies that leave backing in the treasury MUST revoke every relevant allowance before the terminal action. Include approvals granted through raw `CALL` actions as well as `SET_ALLOWANCE`; the latter's `AllowanceSet` events do not enumerate raw token approvals.
 
 Example plan action order:
 
@@ -513,8 +513,9 @@ Rules:
 ## Liquidation Mechanics
 
 1. On `LIQUIDATE_TREASURY`, the executor:
+   - Redeems treasury spot-LP shares and burns all treasury-held venture tokens
    - Calls `venture.setLiquidator(liquidator)` which sets `liquidationActive = true`
-   - Calls `ILiquidator(liquidator).initialize(venture, assets, totalSupply)` which snapshots total supply and asset balances
+   - Calls `ILiquidator(liquidator).initialize(venture, assets, totalSupply)` which escrows listed assets in `SimpleLiquidator` and snapshots the post-burn supply and received balances
 2. Token holders call `ILiquidator.claim()`:
    - Burns all caller's venture tokens via the Venture
    - Transfers each asset pro rata based on burned amount vs total supply snapshot

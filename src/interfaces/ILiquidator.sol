@@ -6,7 +6,7 @@ import {GovernanceTypes} from "../libraries/GovernanceTypes.sol";
 /// @title ILiquidator
 /// @notice Interface for liquidation strategy contracts.
 /// @dev Implementations handle the actual liquidation logic (pro-rata, auction, etc.)
-///      while keeping assets in the Venture treasury.
+///      and may escrow claim backing away from the Venture treasury.
 interface ILiquidator {
     // ─────────────────────────────────────────────────────────
     // Errors

@@ -46,7 +46,7 @@ contract VentureLiquidationVaultRedemptionTest is DecisionMarketBase {
         address vault = hub.ventureLiquidityVault(venture);
         assertGt(ISpotLiquidityVault(vault).shareBalance(venture), 0, "treasury holds bootstrap shares");
 
-        uint256 tVentureBefore = IERC20(ventureToken).balanceOf(venture);
+        uint256 supplyBefore = IERC20(ventureToken).totalSupply();
         uint256 tMoneyBefore = usdc.balanceOf(venture);
 
         SimpleLiquidator liquidator = new SimpleLiquidator(address(hub));
@@ -56,7 +56,8 @@ contract VentureLiquidationVaultRedemptionTest is DecisionMarketBase {
         IGovernanceExecutor(executor).executeProposal(venture, 1, 1, _liquidatePlan(address(liquidator)));
 
         assertEq(ISpotLiquidityVault(vault).shareBalance(venture), 0, "vault shares fully redeemed");
-        assertGt(IERC20(ventureToken).balanceOf(venture), tVentureBefore, "venture tokens landed in treasury");
+        assertEq(IERC20(ventureToken).balanceOf(venture), 0, "treasury claim tokens retired");
+        assertLt(IERC20(ventureToken).totalSupply(), supplyBefore, "redeemed claim tokens burned");
         assertGt(usdc.balanceOf(venture), tMoneyBefore, "money tokens landed in treasury");
         assertTrue(Venture(payable(venture)).liquidationActive(), "liquidation active");
         assertEq(Venture(payable(venture)).authorizedLiquidator(), address(liquidator), "liquidator set");
