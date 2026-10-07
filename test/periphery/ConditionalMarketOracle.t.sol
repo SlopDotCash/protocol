@@ -343,7 +343,7 @@ contract ConditionalMarketOracleLifecycleTest is Test {
         internal
         returns (uint32 tradingStart, uint32 tradingEnd)
     {
-        tradingStart = uint32(block.timestamp);
+        tradingStart = uint32(vm.getBlockTimestamp());
         tradingEnd = tradingStart + DURATION;
         oracle.initialize(proposalId, reserve0, reserve1, tradingStart, tradingEnd, THRESHOLD_BPS);
     }
@@ -394,7 +394,7 @@ contract ConditionalMarketOracleLifecycleTest is Test {
     }
 
     function test_initialize_revertsOnZeroReserves() public {
-        uint32 start = uint32(block.timestamp);
+        uint32 start = uint32(vm.getBlockTimestamp());
         vm.expectRevert(ConditionalMarketOracle.InvalidReserves.selector);
         oracle.initialize(1, 0, RESERVE_USDC, start, start + DURATION, THRESHOLD_BPS);
 
@@ -403,7 +403,7 @@ contract ConditionalMarketOracleLifecycleTest is Test {
     }
 
     function test_initialize_revertsOnEmptyTradingWindow() public {
-        uint32 start = uint32(block.timestamp);
+        uint32 start = uint32(vm.getBlockTimestamp());
         vm.expectRevert(ConditionalMarketOracle.InvalidTradingWindow.selector);
         oracle.initialize(1, RESERVE_VENTURE, RESERVE_USDC, start, start, THRESHOLD_BPS);
 
@@ -412,7 +412,7 @@ contract ConditionalMarketOracleLifecycleTest is Test {
     }
 
     function test_initialize_revertsOnInvalidThreshold() public {
-        uint32 start = uint32(block.timestamp);
+        uint32 start = uint32(vm.getBlockTimestamp());
         vm.expectRevert(ConditionalMarketOracle.InvalidWinningThreshold.selector);
         oracle.initialize(1, RESERVE_VENTURE, RESERVE_USDC, start, start + DURATION, 0);
 
@@ -422,7 +422,7 @@ contract ConditionalMarketOracleLifecycleTest is Test {
 
     function test_initialize_seedNeverZero() public {
         // Reserve skew that floors the raw seed price to zero must anchor at 1, not 0.
-        uint32 start = uint32(block.timestamp);
+        uint32 start = uint32(vm.getBlockTimestamp());
         oracle.initialize(1, 1 << 140, 1, start, start + DURATION, THRESHOLD_BPS);
 
         (, uint256 lastP0,,,,) = oracle.oracleStates(1);
@@ -430,7 +430,7 @@ contract ConditionalMarketOracleLifecycleTest is Test {
     }
 
     function test_initialize_seedSaturatedToMaxPrice() public {
-        uint32 start = uint32(block.timestamp);
+        uint32 start = uint32(vm.getBlockTimestamp());
         oracle.initialize(1, 1, 1 << 100, start, start + DURATION, THRESHOLD_BPS);
 
         (, uint256 lastP0,,,,) = oracle.oracleStates(1);
