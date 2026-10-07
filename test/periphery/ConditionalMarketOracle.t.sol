@@ -3,37 +3,311 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {ConditionalMarketOracle} from "../../src/periphery/ConditionalMarketOracle.sol";
-import {IConditionalMarketOracle} from "../../src/interfaces/IConditionalMarketOracle.sol";
-import {IUmiaHub} from "../../src/interfaces/IUmiaHub.sol";
 
-/// @notice Test harness that exposes internal functions and bypasses the access control
 contract ConditionalMarketOracleHarness is ConditionalMarketOracle {
-    constructor(address _hub) ConditionalMarketOracle(_hub) {}
+    constructor(address hub) ConditionalMarketOracle(hub) {}
 
-    /// @dev One full clamp period: the bound is exactly 2.5x / 0.4x.
-    function exposed_clampPrice(uint256 rawPrice, uint256 lastPrice) external pure returns (uint256) {
-        return _clampPrice(rawPrice, lastPrice, 60);
-    }
-
-    function exposed_clampPrice(uint256 rawPrice, uint256 lastPrice, uint32 timeElapsed)
+    function integrate(uint256 target, uint256 start, uint32 dt, uint256 rate, uint256 remainder)
         external
         pure
-        returns (uint256)
+        returns (uint256 area, uint256 endpoint, uint256 nextRemainder)
     {
-        return _clampPrice(rawPrice, lastPrice, timeElapsed);
+        return _integrate(target, start, dt, rate, remainder);
     }
 }
 
-/// @notice Minimal mock hub that returns msg.sender as market manager
 contract MockHub {
     address public umiaMarketCore;
 
-    constructor(address _mm) {
-        umiaMarketCore = _mm;
+    constructor(address core) {
+        umiaMarketCore = core;
     }
 }
 
 contract ConditionalMarketOracleTest is Test {
+    ConditionalMarketOracleHarness oracle;
+    MockHub hub;
+    uint256 constant Q112 = 1 << 112;
+    uint256 constant MAX_PRICE = 1 << 208;
+    uint32 constant START = 1000;
+    uint32 constant END = START + 3 days;
+
+    function setUp() public {
+        vm.warp(START);
+        hub = new MockHub(address(this));
+        oracle = new ConditionalMarketOracleHarness(address(hub));
+    }
+
+    function _init(uint256 id) internal {
+        oracle.initialize(id, 1, 40, START, END, 200);
+    }
+
+    function test_initialize_seedAndRateAndGetterAbi() public {
+        _init(1);
+        (uint256 cumulative, uint256 price, uint32 start, uint32 end, uint32 ts, bool initialized) =
+            oracle.oracleStates(1);
+        assertEq(cumulative, 0);
+        assertEq(price, 40 * Q112);
+        assertEq(oracle.priceSlewRate(1), Q112);
+        assertEq(oracle.cumulativeRemainder(1), 0);
+        assertEq(start, START);
+        assertEq(end, END);
+        assertEq(ts, START);
+        assertTrue(initialized);
+    }
+
+    function test_initialize_validation() public {
+        vm.expectRevert(ConditionalMarketOracle.InvalidReserves.selector);
+        oracle.initialize(1, 0, 1, START, END, 200);
+        vm.expectRevert(ConditionalMarketOracle.InvalidReserves.selector);
+        oracle.initialize(1, 1, 0, START, END, 200);
+        vm.expectRevert(ConditionalMarketOracle.InvalidTradingWindow.selector);
+        oracle.initialize(1, 1, 1, START, START, 200);
+        vm.expectRevert(ConditionalMarketOracle.InvalidWinningThreshold.selector);
+        oracle.initialize(1, 1, 1, START, END, 0);
+        vm.expectRevert(ConditionalMarketOracle.InvalidWinningThreshold.selector);
+        oracle.initialize(1, 1, 1, START, END, 10001);
+        _init(1);
+        vm.expectRevert(ConditionalMarketOracle.AlreadyInitialized.selector);
+        _init(1);
+    }
+
+    function test_accessControl() public {
+        vm.prank(address(123));
+        vm.expectRevert(ConditionalMarketOracle.OnlyMarketCore.selector);
+        oracle.initialize(1, 1, 1, START, END, 200);
+        vm.prank(address(123));
+        vm.expectRevert(ConditionalMarketOracle.OnlyMarketCore.selector);
+        oracle.update(1, 1, 1);
+    }
+
+    function test_uninitializedAndPreStart() public {
+        oracle.update(1, 1, 1);
+        vm.expectRevert(ConditionalMarketOracle.ProposalNotInitialized.selector);
+        oracle.calculateTWAP(1, 1, 1);
+        oracle.initialize(1, 1, 40, START + 10, END, 200);
+        oracle.update(1, 1, 1000);
+        (uint256 cumulative, uint256 price,,, uint32 ts,) = oracle.oracleStates(1);
+        assertEq(cumulative, 0);
+        assertEq(price, 40 * Q112);
+        assertEq(ts, START + 10);
+        vm.expectRevert(ConditionalMarketOracle.TradingNotStarted.selector);
+        oracle.calculateTWAP(1, 1, 40);
+    }
+
+    function test_sameSecondNoEffect() public {
+        _init(1);
+        oracle.update(1, 1, 1000000);
+        assertEq(oracle.calculateTWAP(1, 1, 1000000), 40 * Q112);
+        (uint256 cumulative, uint256 price,,,,) = oracle.oracleStates(1);
+        assertEq(cumulative, 0);
+        assertEq(price, 40 * Q112);
+    }
+
+    function test_constantPrice() public {
+        _init(1);
+        vm.warp(START + 100);
+        oracle.update(1, 1, 40);
+        (uint256 cumulative,,,,,) = oracle.oracleStates(1);
+        assertEq(cumulative, 4000 * Q112);
+        vm.warp(END);
+        assertEq(oracle.calculateTWAP(1, 1, 40), 40 * Q112);
+    }
+
+    function test_exactRampAndPlateau() public view {
+        // Rate 3; distance 5 reaches target after 5/3 seconds. Area = 15*10 -25/6.
+        (uint256 area, uint256 endpoint, uint256 remainder) = oracle.integrate(15, 10, 10, 3, 0);
+        assertEq(area, 145);
+        assertEq(endpoint, 15);
+        assertEq(remainder, 5);
+        // Downward: 10*10 +25/6 = 104 +1/6.
+        (area, endpoint, remainder) = oracle.integrate(10, 15, 10, 3, 0);
+        assertEq(area, 104);
+        assertEq(endpoint, 10);
+        assertEq(remainder, 1);
+    }
+
+    function test_exactUnfinishedRamp() public view {
+        (uint256 area, uint256 endpoint, uint256 remainder) = oracle.integrate(100, 10, 3, 3, 0);
+        assertEq(area, 43); // (10+19)/2 *3 =43.5
+        assertEq(endpoint, 19);
+        assertEq(remainder, 3);
+    }
+
+    function test_sparseAndDenseUpdatesIdentical() public {
+        _init(1);
+        _init(2);
+        for (uint32 i = 1; i <= 100; ++i) {
+            vm.warp(START + i);
+            oracle.update(1, 1, 97);
+        }
+        oracle.update(2, 1, 97);
+        (uint256 c1, uint256 p1,,,,) = oracle.oracleStates(1);
+        (uint256 c2, uint256 p2,,,,) = oracle.oracleStates(2);
+        assertEq(c1, c2);
+        assertEq(p1, p2);
+        assertEq(oracle.cumulativeRemainder(1), oracle.cumulativeRemainder(2));
+        // Same price path returning to its seed; sparse and dense recovery must also agree.
+        for (uint32 i = 101; i <= 200; ++i) {
+            vm.warp(START + i);
+            oracle.update(1, 1, 40);
+        }
+        oracle.update(2, 1, 40);
+        (c1, p1,,,,) = oracle.oracleStates(1);
+        (c2, p2,,,,) = oracle.oracleStates(2);
+        assertEq(c1, c2);
+        assertEq(p1, p2);
+        assertEq(oracle.cumulativeRemainder(1), oracle.cumulativeRemainder(2));
+    }
+
+    function testFuzz_integralPartitionInvariant(uint256 seed, uint256 target, uint32 a, uint32 b) public view {
+        seed = bound(seed, 1, MAX_PRICE);
+        target = bound(target, 1, MAX_PRICE);
+        a = uint32(bound(a, 0, 100000));
+        b = uint32(bound(b, 0, 100000));
+        uint256 rate = (seed + 39) / 40;
+        (uint256 allArea, uint256 allEnd, uint256 allRem) = oracle.integrate(target, seed, a + b, rate, 0);
+        (uint256 first, uint256 firstEnd, uint256 firstRem) = oracle.integrate(target, seed, a, rate, 0);
+        (uint256 second, uint256 secondEnd, uint256 secondRem) = oracle.integrate(target, firstEnd, b, rate, firstRem);
+        assertEq(first + second, allArea);
+        assertEq(secondEnd, allEnd);
+        assertEq(secondRem, allRem);
+    }
+
+    function testFuzz_partitionWithCarryAndIndependentStart(
+        uint256 seed,
+        uint256 start,
+        uint256 target,
+        uint32 a,
+        uint32 b,
+        uint256 carry
+    ) public view {
+        seed = bound(seed, 1, MAX_PRICE);
+        start = bound(start, 1, MAX_PRICE);
+        target = bound(target, 1, MAX_PRICE);
+        a = uint32(bound(a, 0, type(uint32).max / 2));
+        b = uint32(bound(b, 0, type(uint32).max / 2));
+        uint256 rate = (seed + 39) / 40;
+        carry = bound(carry, 0, rate * 2 - 1);
+        (uint256 allArea, uint256 allEnd, uint256 allRem) = oracle.integrate(target, start, a + b, rate, carry);
+        (uint256 first, uint256 firstEnd, uint256 firstRem) = oracle.integrate(target, start, a, rate, carry);
+        (uint256 second, uint256 secondEnd, uint256 secondRem) = oracle.integrate(target, firstEnd, b, rate, firstRem);
+        assertEq(first + second, allArea);
+        assertEq(secondEnd, allEnd);
+        assertEq(secondRem, allRem);
+        assertLt(allRem, 2 * rate);
+    }
+
+    function test_mixedDirectionFractionalCarryConservesArea() public view {
+        (uint256 risingArea, uint256 endpoint, uint256 remainder) = oracle.integrate(15, 10, 10, 3, 0);
+        assertEq(remainder, 5);
+        (uint256 fallingArea, uint256 finalEndpoint, uint256 finalRemainder) =
+            oracle.integrate(10, endpoint, 10, 3, remainder);
+        // Equal opposing ramps cancel their triangular areas, including fractions.
+        assertEq(risingArea + fallingArea, 250);
+        assertEq(finalEndpoint, 10);
+        assertEq(finalRemainder, 0);
+    }
+
+    function test_restoredPriceDoesNotLeakAcrossQuietGap() public {
+        _init(1);
+        vm.warp(START + 1);
+        oracle.update(1, 1, 1000000);
+        vm.warp(START + 2);
+        oracle.update(1, 1, 1000000);
+        // Restore raw reserves now. The filter recovers for 2 seconds and then stays at the seed.
+        vm.warp(END);
+        uint256 preview = oracle.calculateTWAP(1, 1, 40);
+        oracle.update(1, 1, 40);
+        (uint256 cumulative, uint256 endpoint,,,,) = oracle.oracleStates(1);
+        assertEq(endpoint, 40 * Q112);
+        assertEq(cumulative, 40 * Q112 * (END - START) + 4 * Q112);
+        assertEq(preview, cumulative / (END - START));
+        assertLt(preview, 40 * Q112 * 10001 / 10000);
+    }
+
+    function test_viewAndStoredIntegralAgreeWithRemainder() public {
+        oracle.initialize(1, Q112, 101, START, END, 200); // seed101, rate3
+        vm.warp(START + 1);
+        oracle.update(1, Q112, 200);
+        assertEq(oracle.cumulativeRemainder(1), 3);
+        vm.warp(START + 17);
+        uint256 preview = oracle.calculateTWAP(1, Q112, 103);
+        oracle.update(1, Q112, 103);
+        assertEq(oracle.calculateTWAP(1, Q112, 103), preview);
+    }
+
+    function test_extremeReservesDoNotOverflow() public {
+        oracle.initialize(1, type(uint256).max, type(uint256).max, START, END, 200);
+        (, uint256 seed,,,,) = oracle.oracleStates(1);
+        assertEq(seed, Q112);
+        vm.warp(END);
+        oracle.update(1, 1, type(uint256).max);
+        oracle.calculateTWAP(1, 1, type(uint256).max);
+    }
+
+    function test_saturatedSeedAndTinySeed() public {
+        oracle.initialize(1, 1, type(uint256).max, START, END, 200);
+        oracle.initialize(2, type(uint256).max, 1, START, END, 200);
+        (, uint256 high,,,,) = oracle.oracleStates(1);
+        (, uint256 low,,,,) = oracle.oracleStates(2);
+        assertEq(high, MAX_PRICE);
+        assertEq(low, 1);
+        assertEq(oracle.priceSlewRate(2), 1);
+        vm.warp(END);
+        oracle.update(1, type(uint256).max, 1);
+        oracle.update(2, 1, type(uint256).max);
+    }
+
+    function test_zeroReservesDoNotConsumeInterval() public {
+        _init(1);
+        vm.warp(START + 50);
+        oracle.update(1, 0, 1);
+        (uint256 c,,,, uint32 ts,) = oracle.oracleStates(1);
+        assertEq(c, 0);
+        assertEq(ts, START);
+        vm.warp(START + 100);
+        oracle.update(1, 1, 40);
+        (c,,,,,) = oracle.oracleStates(1);
+        assertEq(c, 4000 * Q112);
+    }
+
+    function test_freezeAtTradingEnd() public {
+        _init(1);
+        vm.warp(END);
+        oracle.update(1, 1, 100);
+        uint256 twap = oracle.calculateTWAP(1, 1, 100);
+        uint256 remainder = oracle.cumulativeRemainder(1);
+        vm.warp(END + 30 days);
+        oracle.update(1, 1, 1);
+        assertEq(oracle.calculateTWAP(1, 1, type(uint256).max), twap);
+        assertEq(oracle.cumulativeRemainder(1), remainder);
+    }
+
+    function testFuzz_update_invariants(uint256[8] calldata r0s, uint256[8] calldata r1s, uint32[8] calldata dts)
+        public
+    {
+        _init(1);
+        uint256 ts = START;
+        uint256 previous;
+        for (uint256 i; i < 8; ++i) {
+            ts += bound(dts[i], 0, 1 days);
+            vm.warp(ts);
+            oracle.update(1, r0s[i], r1s[i]);
+            oracle.calculateTWAP(1, r0s[i], r1s[i]);
+            (uint256 cumulative, uint256 price,,, uint32 lastTs,) = oracle.oracleStates(1);
+            assertGe(cumulative, previous);
+            assertGe(price, 1);
+            assertLe(price, MAX_PRICE);
+            assertLe(lastTs, END);
+            assertLt(oracle.cumulativeRemainder(1), 2 * oracle.priceSlewRate(1));
+            previous = cumulative;
+        }
+    }
+}
+
+// Oracle lifecycle cases that do not depend on the clamp.
+contract ConditionalMarketOracleLifecycleTest is Test {
     ConditionalMarketOracleHarness oracle;
     MockHub hub;
 
@@ -81,90 +355,6 @@ contract ConditionalMarketOracleTest is Test {
     // ═══════════════════════════════════════════════════════════
     // _clampPrice unit tests
     // ═══════════════════════════════════════════════════════════
-
-    function test_clampPrice_withinRangeUnchanged() public view {
-        uint256 lastPrice = 1000 * Q112;
-        uint256 rawPrice = 1500 * Q112;
-        uint256 clamped = oracle.exposed_clampPrice(rawPrice, lastPrice);
-        assertEq(clamped, rawPrice, "Price within 2.5x range should pass through");
-    }
-
-    function test_clampPrice_clampedAtMax() public view {
-        uint256 lastPrice = 1000 * Q112;
-        uint256 rawPrice = 5000 * Q112;
-        uint256 clamped = oracle.exposed_clampPrice(rawPrice, lastPrice);
-        uint256 expectedMax = (lastPrice * 5) / 2;
-        assertEq(clamped, expectedMax, "Price above 2.5x should be clamped to max");
-    }
-
-    function test_clampPrice_clampedAtMin() public view {
-        uint256 lastPrice = 1000 * Q112;
-        uint256 rawPrice = 100 * Q112;
-        uint256 clamped = oracle.exposed_clampPrice(rawPrice, lastPrice);
-        uint256 expectedMin = (lastPrice * 2 + 4) / 5;
-        assertEq(clamped, expectedMin, "Price below 0.4x should be clamped to min");
-    }
-
-    function test_clampPrice_exactlyAtBoundary() public view {
-        uint256 lastPrice = 1000 * Q112;
-
-        uint256 exactMax = (lastPrice * 5) / 2;
-        assertEq(oracle.exposed_clampPrice(exactMax, lastPrice), exactMax, "Exactly at max boundary");
-
-        uint256 exactMin = (lastPrice * 2 + 4) / 5;
-        assertEq(oracle.exposed_clampPrice(exactMin, lastPrice), exactMin, "Exactly at min boundary");
-    }
-
-    function test_clampPrice_symmetricRatio() public view {
-        uint256 lastPrice = 1000 * Q112;
-        uint256 maxPrice = oracle.exposed_clampPrice(type(uint256).max, lastPrice);
-        uint256 minPrice = oracle.exposed_clampPrice(0, lastPrice);
-
-        // max / lastPrice = 2.5, lastPrice / min = 2.5
-        assertEq(maxPrice, (lastPrice * 5) / 2, "Max should be 2.5x last");
-        assertEq(minPrice, (lastPrice * 2 + 4) / 5, "Min should be 0.4x last");
-
-        // max * min ≈ lastPrice^2 (within rounding)
-        uint256 product = (maxPrice / Q112) * (minPrice / Q112);
-        uint256 lastSquared = (lastPrice / Q112) * (lastPrice / Q112);
-        assertEq(product, lastSquared, "max * min should equal lastPrice^2");
-    }
-
-    function test_clampPrice_worksWithLargeQ112Values() public view {
-        // price when reserve0(6-dec) << reserve1(18-dec): ratio is 1e12 scaled by Q112
-        uint256 lastPrice = (RESERVE_VENTURE * Q112) / RESERVE_USDC;
-        assertGt(lastPrice, 1e44, "Inverse price should be very large in Q112");
-
-        uint256 rawDouble = lastPrice * 2;
-        uint256 clamped = oracle.exposed_clampPrice(rawDouble, lastPrice);
-        assertEq(clamped, rawDouble, "2x should be within 2.5x range");
-
-        uint256 rawTriple = lastPrice * 3;
-        uint256 clampedTriple = oracle.exposed_clampPrice(rawTriple, lastPrice);
-        assertEq(clampedTriple, (lastPrice * 5) / 2, "3x should be clamped to 2.5x");
-    }
-
-    function test_clampPrice_worksWithSmallQ112Values() public view {
-        // price0 when reserve0(18-dec) >> reserve1(6-dec): ratio is 1e-12 scaled by Q112
-        uint256 lastPrice = (RESERVE_USDC * Q112) / RESERVE_VENTURE;
-        assertGt(lastPrice, 1e20, "Forward price should be in Q112 scale");
-
-        uint256 clamped = oracle.exposed_clampPrice(1, lastPrice);
-        assertEq(clamped, (lastPrice * 2 + 4) / 5, "Tiny raw should clamp to min");
-    }
-
-    function test_clampPrice_neverReturnsZero() public view {
-        assertEq(oracle.exposed_clampPrice(0, 1), 1, "min clamp rounds up to 1");
-        assertEq(oracle.exposed_clampPrice(0, 2), 1, "min clamp rounds up to 1");
-        assertGt(oracle.exposed_clampPrice(0, 1000 * Q112), 0, "clamped observation is never zero");
-    }
-
-    function test_clampPrice_saturatesToMaxPrice() public view {
-        // A raw price beyond the saturation cap is truncated before the band check.
-        uint256 lastPrice = MAX_PRICE_X112;
-        uint256 clamped = oracle.exposed_clampPrice(type(uint256).max, lastPrice);
-        assertEq(clamped, MAX_PRICE_X112, "Observation saturates at MAX_PRICE_X112");
-    }
 
     // ═══════════════════════════════════════════════════════════
     // initialize()
@@ -308,85 +498,6 @@ contract ConditionalMarketOracleTest is Test {
         assertEq(lastTs, uint32(vm.getBlockTimestamp()), "lastTimestamp advanced");
     }
 
-    function test_update_clampsLargeJump() public {
-        _init(1);
-
-        vm.warp(vm.getBlockTimestamp() + 60);
-
-        // 100x price change — should be clamped to 2.5x
-        oracle.update(1, RESERVE_VENTURE / 100, RESERVE_USDC);
-
-        (, uint256 lastP0,,,,) = oracle.oracleStates(1);
-        uint256 expectedClamped = (_seedPrice() * 5) / 2;
-        assertEq(lastP0, expectedClamped, "100x jump should be clamped to 2.5x");
-    }
-
-    function test_update_clampsLargeDrop() public {
-        _init(1);
-
-        vm.warp(vm.getBlockTimestamp() + 60);
-
-        // 10x price drop — should be clamped to 0.4x
-        oracle.update(1, RESERVE_VENTURE * 10, RESERVE_USDC);
-
-        (, uint256 lastP0,,,,) = oracle.oracleStates(1);
-        uint256 expectedClamped = (_seedPrice() * 2 + 4) / 5;
-        assertEq(lastP0, expectedClamped, "10x drop should be clamped to 0.4x");
-    }
-
-    function test_update_multiBlockManipulationBounded() public {
-        (uint32 tradingStart,) = _init(1);
-        uint256 initialP0 = _seedPrice();
-
-        // 10 consecutive blocks, each trying to push price up 100x
-        for (uint256 i = 0; i < 10; i++) {
-            vm.warp(vm.getBlockTimestamp() + 12);
-            oracle.update(1, RESERVE_VENTURE / 100, RESERVE_USDC);
-        }
-
-        (, uint256 finalP0,,, uint32 finalTs,) = oracle.oracleStates(1);
-        assertEq(finalTs, tradingStart + 120, "All ten distinct updates advanced the oracle clock");
-
-        // The bound scales with elapsed time, not update count: 120s of updates allow at most
-        // 2.5^(120/60) = 6.25x however many updates land in that window.
-        assertGt(finalP0, initialP0 * 2, "Multiple clamped blocks should accumulate beyond 2x");
-        assertLe(finalP0, (initialP0 * 625) / 100 + 1, "Growth bounded by 2.5x per 60s of elapsed time");
-    }
-
-    /// @dev Regression: a per-update clamp let a few back-to-back updates ratchet the anchor to ~16x and
-    ///      then scored a multi-day quiet interval at 0.4x of that anchor (~6x the real price). The
-    ///      time-scaled bound must let a quiet interval catch up to the real price.
-    function test_update_spikeDoesNotPersistThroughQuietInterval() public {
-        (uint32 tradingStart, uint32 tradingEnd) = _init(1);
-        uint256 seed = _seedPrice();
-
-        // Attacker holds a 16x price for three 2-second blocks, updating every block.
-        vm.warp(uint256(tradingStart) + 1 hours);
-        oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
-        for (uint256 i = 0; i < 3; i++) {
-            vm.warp(vm.getBlockTimestamp() + 2);
-            oracle.update(1, RESERVE_VENTURE / 16, RESERVE_USDC);
-        }
-
-        (,,,, uint32 spikeEnd,) = oracle.oracleStates(1);
-        assertEq(spikeEnd, tradingStart + 1 hours + 6, "Three distinct two-second updates occurred");
-
-        // Price is restored and the pool goes quiet until the end of trading.
-        vm.warp(tradingEnd);
-        uint256 twap = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
-        assertLe(twap, (seed * 10_001) / 10_000, "A seconds-long spike must not move a 3-day TWAP by 1bp");
-    }
-
-    function test_clampPrice_boundScalesWithElapsedTime() public view {
-        uint256 lastPrice = 1000 * Q112;
-        uint256 raw = 1_000_000 * Q112;
-        assertLt(oracle.exposed_clampPrice(raw, lastPrice, 2), (lastPrice * 104) / 100, "2s allows ~3%");
-        assertEq(oracle.exposed_clampPrice(raw, lastPrice, 120), (lastPrice * 25) / 4, "120s allows exactly 6.25x");
-        assertEq(oracle.exposed_clampPrice(raw, lastPrice, 30 minutes), raw, "Past the horizon the spot is taken");
-        assertEq(oracle.exposed_clampPrice(Q112, lastPrice, 30 minutes), Q112, "Unbounded downward too");
-        assertEq(oracle.exposed_clampPrice(0, lastPrice, 30 minutes), 1, "Never zero");
-    }
-
     function test_update_zeroReservesCreditedByNextUpdate() public {
         (uint32 tradingStart,) = _init(1);
 
@@ -513,48 +624,6 @@ contract ConditionalMarketOracleTest is Test {
         assertEq(twap, _seedPrice(), "TWAP with constant reserves should equal the seed price");
     }
 
-    function test_twap_sustainedSpikeUsesActualDuration() public {
-        _init(1);
-
-        uint256 basePrice = _seedPrice();
-
-        // 23 hours of normal trading
-        for (uint256 i = 0; i < 23; i++) {
-            vm.warp(vm.getBlockTimestamp() + 1 hours);
-            oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
-        }
-
-        // A sustained hour at the higher price has real elapsed-time weight.
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
-        oracle.update(1, RESERVE_VENTURE / 100, RESERVE_USDC);
-
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
-        uint256 twap = oracle.calculateTWAP(1, RESERVE_VENTURE / 100, RESERVE_USDC);
-
-        // The high price actually lasted two hours. Long intervals must not retain a
-        // stale per-update cap; score precisely the price held over each interval.
-        uint256 highPrice = (RESERVE_USDC * Q112) / (RESERVE_VENTURE / 100);
-        assertEq(twap, (23 * basePrice + 2 * highPrice) / 25, "Only actual duration weights the spike");
-    }
-
-    function test_twap_viewExtrapolatesWithClamping() public {
-        _init(1);
-
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
-        oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
-
-        // A swap checkpoints the old price before changing reserves. Query two seconds
-        // later to exercise the short-interval clamp without fabricating an hour of history.
-        vm.warp(vm.getBlockTimestamp() + 2);
-        uint256 twapNormal = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
-        uint256 twapManipulated = oracle.calculateTWAP(1, RESERVE_VENTURE / 100, RESERVE_USDC);
-
-        // The manipulated extrapolation should be clamped
-        uint256 diff = twapManipulated > twapNormal ? twapManipulated - twapNormal : twapNormal - twapManipulated;
-        uint256 maxDiff = twapNormal; // At most 100% deviation (actually much less)
-        assertLt(diff, maxDiff, "Extrapolated TWAP should be bounded by clamping");
-    }
-
     function test_twap_isolatedPerProposal() public {
         // Proposal 1: normal price. Proposal 2: double price.
         _initWithReserves(1, RESERVE_VENTURE, RESERVE_USDC);
@@ -637,23 +706,6 @@ contract ConditionalMarketOracleTest is Test {
         // calculateTWAP should extrapolate the anchored observation
         uint256 twap = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
         assertEq(twap, _seedPrice(), "TWAP after long gap should equal extrapolated seed price");
-    }
-
-    function test_twap_correctAfterGapThenManipulation() public {
-        _init(1);
-
-        // 2 days of no trades
-        vm.warp(vm.getBlockTimestamp() + 2 days);
-
-        // The production core checkpoints the unchanged reserves before a swap.
-        oracle.update(1, RESERVE_VENTURE, RESERVE_USDC);
-        uint256 twapNormal = oracle.calculateTWAP(1, RESERVE_VENTURE, RESERVE_USDC);
-        uint256 twapSameBlock = oracle.calculateTWAP(1, RESERVE_VENTURE / 100, RESERVE_USDC);
-        assertEq(twapSameBlock, twapNormal, "A new spot price cannot rewrite the preceding quiet interval");
-
-        vm.warp(vm.getBlockTimestamp() + 2);
-        uint256 twapBad = oracle.calculateTWAP(1, RESERVE_VENTURE / 100, RESERVE_USDC);
-        assertLe(twapBad, (twapNormal * 10_001) / 10_000, "Two seconds cannot rewrite two days of history");
     }
 
     // ═══════════════════════════════════════════════════════════
