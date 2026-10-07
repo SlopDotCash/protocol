@@ -134,10 +134,10 @@ library SettlementLib {
             address vault = hub.ventureLiquidityVault(venture);
             if (vault != address(0)) {
                 if (ventureToReAdd > 0) {
-                    SafeTransferLib.safeApprove(IVenture(venture).token(), vault, ventureToReAdd);
+                    SafeTransferLib.safeApprove(hub.ventureTokenById(market.ventureId), vault, ventureToReAdd);
                 }
                 if (moneyToReAdd > 0) {
-                    SafeTransferLib.safeApprove(IVenture(venture).moneyToken(), vault, moneyToReAdd);
+                    SafeTransferLib.safeApprove(hub.ventureMoneyTokenById(market.ventureId), vault, moneyToReAdd);
                 }
                 ISpotLiquidityVault(vault).returnFromDecisionMarket(marketId, ventureToReAdd, moneyToReAdd);
             }

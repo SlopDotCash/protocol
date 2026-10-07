@@ -18,6 +18,7 @@ import {Venture} from "./Venture.sol";
 import {VentureProxy} from "./VentureProxy.sol";
 import {VentureToken} from "../tokens/VentureToken.sol";
 import {IVentureToken} from "../interfaces/IVentureToken.sol";
+import {ISpotLiquidityVault} from "../interfaces/ISpotLiquidityVault.sol";
 
 /// @title UmiaHub
 /// @notice The hub registry contract for Umia ventures
@@ -146,8 +147,17 @@ contract UmiaHub is Initializable, UUPSUpgradeable, Ownable, IUmiaHub {
     ///      individually via `VentureVestingAuthority.setVestingAdminRevoked`.
     address public vestingAdmin;
 
+    /// @notice Each venture's token and money token, pinned when the venture is created.
+    /// @dev The shared market core and stake escrow resolve tokens through `ventureTokenById` /
+    ///      `ventureMoneyTokenById`. A venture is upgradeable by its own governance, so reading
+    ///      `token()` live would let one venture's upgrade point those payouts at another venture's
+    ///      escrowed token. Ventures created before these slots existed are pinned by the owner via
+    ///      {pinVentureTokens}; until then shared-escrow token getters fail closed.
+    mapping(uint256 => address) private _pinnedVentureToken;
+    mapping(uint256 => address) private _pinnedVentureMoneyToken;
+
     /// @notice Gap for future upgrades.
-    uint256[50] private __gap;
+    uint256[48] private __gap;
 
     // ─────────────────────────────────────────────────────────
     // Upgrade
@@ -201,14 +211,55 @@ contract UmiaHub is Initializable, UUPSUpgradeable, Ownable, IUmiaHub {
     /// @param id The ID of the venture
     /// @return The token address
     function ventureTokenById(uint256 id) external view returns (address) {
-        return IVenture(_ventureById[id].venture).token();
+        address pinned = _pinnedVentureToken[id];
+        if (pinned == address(0)) revert VentureTokensNotPinned();
+        return pinned;
     }
 
     /// @notice Get the money token address of a venture by ID
     /// @param id The ID of the venture
     /// @return The money token address
     function ventureMoneyTokenById(uint256 id) external view returns (address) {
-        return IVenture(_ventureById[id].venture).moneyToken();
+        address pinned = _pinnedVentureMoneyToken[id];
+        if (pinned == address(0)) revert VentureTokensNotPinned();
+        return pinned;
+    }
+
+    /// @notice Pin the tokens of ventures created before token pinning existed. Write-once per venture.
+    /// @dev Run as part of the hub upgrade, before any venture can execute a governance upgrade.
+    function pinVentureTokens(uint256[] calldata ids) external onlyOwner {
+        for (uint256 i; i < ids.length; ++i) {
+            uint256 id = ids[i];
+            address venture = _ventureById[id].venture;
+            if (venture == address(0)) revert VentureNotFound();
+            if (_pinnedVentureToken[id] != address(0)) continue;
+            address vault = _ventureLiquidityVault[venture];
+            if (vault == address(0)) revert VentureTokensNotPinned();
+            // Existing vaults captured immutable asset identities before the venture's upgrade.
+            _pinVentureTokens(id, ISpotLiquidityVault(vault).ventureToken(), ISpotLiquidityVault(vault).moneyToken());
+        }
+    }
+
+    /// @notice Migrate legacy ventures without a vault using independently verified creation assets.
+    /// @dev Owner must verify these addresses against the original creation records. Write-once.
+    function pinVentureTokens(uint256[] calldata ids, address[] calldata tokens, address[] calldata moneyTokens)
+        external
+        onlyOwner
+    {
+        if (ids.length != tokens.length || ids.length != moneyTokens.length) revert InvalidToken();
+        for (uint256 i; i < ids.length; ++i) {
+            uint256 id = ids[i];
+            address venture = _ventureById[id].venture;
+            if (venture == address(0)) revert VentureNotFound();
+            if (_pinnedVentureToken[id] != address(0)) continue;
+            address vault = _ventureLiquidityVault[venture];
+            if (
+                vault != address(0)
+                    && (tokens[i] != ISpotLiquidityVault(vault).ventureToken()
+                        || moneyTokens[i] != ISpotLiquidityVault(vault).moneyToken())
+            ) revert InvalidToken();
+            _pinVentureTokens(id, tokens[i], moneyTokens[i]);
+        }
     }
 
     /// @notice Get the governance executor address for a venture.
@@ -618,8 +669,19 @@ contract UmiaHub is Initializable, UUPSUpgradeable, Ownable, IUmiaHub {
             );
 
         _ventureById[id] = VentureInfo({id: id, venture: venture, name: name, createdAt: block.timestamp});
+        _pinVentureTokens(id, token, moneyToken);
 
         emit VentureCreated(id, venture, block.timestamp);
+    }
+
+    function _pinVentureTokens(uint256 id, address token, address moneyToken) internal {
+        if (
+            token == address(0) || moneyToken == address(0) || token == moneyToken || token.code.length == 0
+                || moneyToken.code.length == 0
+        ) revert InvalidToken();
+        _pinnedVentureToken[id] = token;
+        _pinnedVentureMoneyToken[id] = moneyToken;
+        emit VentureTokensPinned(id, token, moneyToken);
     }
 
     // ─────────────────────────────────────────────────────────

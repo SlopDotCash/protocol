@@ -11,7 +11,7 @@ import {IUmiaMarketStake} from "../interfaces/IUmiaMarketStake.sol";
 import {IVenture} from "../interfaces/IVenture.sol";
 import {ISpotLiquidityVault} from "../interfaces/ISpotLiquidityVault.sol";
 import {CPMM} from "./CPMM.sol";
-import {MarketData, ProposalData, Pool, SettleAcct} from "./MarketCoreTypes.sol";
+import {MarketData, ProposalData, Pool, SettleAcct, EXECUTION_WINDOW} from "./MarketCoreTypes.sol";
 import {LedgerLib} from "./LedgerLib.sol";
 
 /// @title MarketCreationLib
@@ -71,10 +71,17 @@ library MarketCreationLib {
         uint256 tradingStart = Math.max(params.startTimestamp, block.timestamp);
         uint256 tradingEnd = tradingStart + duration;
 
-        // One active (unsettled) market per venture at a time.
+        // One active (unsettled) market per venture at a time, and none while the previous market's
+        // winning payload can still execute: it was priced against the treasury the next market would
+        // see, and a winning LIQUIDATE cannot pull vault liquidity while a new market holds it.
         {
             uint256 activeId = activeMarketByVenture[params.ventureId];
-            if (activeId != 0 && !markets[activeId].settled) revert IUmiaMarketCore.VentureMarketAlreadyActive();
+            if (activeId != 0) {
+                if (!markets[activeId].settled) revert IUmiaMarketCore.VentureMarketAlreadyActive();
+                if (_payloadPending(hub, activeId, markets[activeId], settle[activeId], proposals)) {
+                    revert IUmiaMarketCore.WinningProposalPendingExecution();
+                }
+            }
         }
         activeMarketByVenture[params.ventureId] = marketId;
 
@@ -289,5 +296,24 @@ library MarketCreationLib {
     function _initialLiquidityShares(uint256 amount0, uint256 amount1) private pure returns (uint256) {
         if (amount0 == 0 || amount1 == 0) return 0;
         return Math.sqrt(amount0 * amount1);
+    }
+
+    /// @dev Whether a settled market's winning payload can still execute: unexecuted, not a no-op,
+    ///      inside its execution window. A reversible circuit breaker cannot discharge it.
+    function _payloadPending(
+        IUmiaHub hub,
+        uint256 marketId,
+        MarketData storage market,
+        SettleAcct storage acct,
+        mapping(uint256 => ProposalData) storage proposals
+    ) private view returns (bool) {
+        if (market.executed) return false;
+        uint256 winningPid = acct.winningProposalId;
+        if (winningPid == 0) return false;
+        ProposalData storage proposal = proposals[winningPid];
+        if (proposal.isNoOp || proposal.executionPayload.length == 0) return false;
+        if (block.timestamp > uint256(acct.settledAt) + market.executionDelay + EXECUTION_WINDOW) return false;
+        // A circuit breaker is reversible; paused payloads remain pending until expiry.
+        return true;
     }
 }

@@ -61,6 +61,7 @@ interface IUmiaHub {
     error InvalidPoolTickSpacing();
     error ActiveMarketsPreventUpdate();
     error InvalidToken();
+    error VentureTokensNotPinned();
     error NotVentureToken();
     error TokenOwnerNotHub();
     error TokenBalanceZero();
@@ -72,6 +73,7 @@ interface IUmiaHub {
     // ─────────────────────────────────────────────────────────
 
     event VentureCreated(uint256 indexed id, address indexed venture, uint256 createdAt);
+    event VentureTokensPinned(uint256 indexed id, address token, address moneyToken);
     event VentureMinMarketStakeUpdated(uint256 indexed id, uint256 amount);
     event MoneyTokenApprovalChanged(address indexed token, bool approved);
     event UmiaMarketCoreUpdated(address indexed oldManager, address indexed newManager);
@@ -109,6 +111,9 @@ interface IUmiaHub {
     function ventureById(uint256 id) external view returns (VentureInfo memory);
     function ventureTokenById(uint256 id) external view returns (address);
     function ventureMoneyTokenById(uint256 id) external view returns (address);
+    function pinVentureTokens(uint256[] calldata ids) external;
+    function pinVentureTokens(uint256[] calldata ids, address[] calldata tokens, address[] calldata moneyTokens)
+        external;
     function approvedMoneyTokens(address token) external view returns (bool);
     function umiaMarketCore() external view returns (address);
     function defaultGovernanceExecutor() external view returns (address);

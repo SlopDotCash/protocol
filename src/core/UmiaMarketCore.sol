@@ -16,7 +16,7 @@ import {IUmiaHub} from "../interfaces/IUmiaHub.sol";
 import {IUmiaMarketCore} from "../interfaces/IUmiaMarketCore.sol";
 import {IConditionalMarketOracle} from "../interfaces/IConditionalMarketOracle.sol";
 import {IGovernanceExecutor} from "../interfaces/IGovernanceExecutor.sol";
-import {MarketData, ProposalData, Pool, SettleAcct} from "../libraries/MarketCoreTypes.sol";
+import {MarketData, ProposalData, Pool, SettleAcct, EXECUTION_WINDOW} from "../libraries/MarketCoreTypes.sol";
 import {LedgerLib} from "../libraries/LedgerLib.sol";
 import {MarketCreationLib} from "../libraries/MarketCreationLib.sol";
 import {SettlementLib} from "../libraries/SettlementLib.sol";
@@ -498,6 +498,15 @@ contract UmiaMarketCore is Initializable, UUPSUpgradeable, ReentrancyGuard, IUmi
             return;
         }
 
+        // A plan that reverted is retried only inside its window; after that it expires rather than
+        // running out of order with later markets against a treasury it was never priced on.
+        if (block.timestamp > uint256(acct.settledAt) + market.executionDelay + EXECUTION_WINDOW) {
+            revert ExecutionWindowExpired();
+        }
+
+        // Existing pre-upgrade state may already contain a newer market. Never revive an older
+        // consequential payload against the treasury state used by that newer market.
+        if (activeMarketByVenture[market.ventureId] != marketId) revert WinningProposalSuperseded();
         address venture = HUB.ventureById(market.ventureId).venture;
         address executor = HUB.governanceExecutor(venture);
         if (executor == address(0) || executor.code.length == 0) revert GovernanceExecutorNotSet();

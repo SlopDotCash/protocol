@@ -3,6 +3,11 @@ pragma solidity ^0.8.24;
 
 import {CPMM} from "./CPMM.sol";
 
+/// @dev How long after its execution delay a winning payload stays executable. Past this a payload
+///      expires: a plan priced by a market long closed must not run against today's treasury, and a
+///      plan that keeps reverting must not block the venture's next market forever.
+uint256 constant EXECUTION_WINDOW = 7 days;
+
 // Storage structs for market, proposal, pool, and settlement state, shared by UmiaMarketCore and
 // its market-creation and settlement libraries. Fields are ordered to pack efficiently into slots.
 

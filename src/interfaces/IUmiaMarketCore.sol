@@ -81,6 +81,9 @@ interface IUmiaMarketCore {
     error WinningProposalNotFound();
     error AlreadyExecuted();
     error ExecutionDelayActive();
+    error ExecutionWindowExpired();
+    error WinningProposalSuperseded();
+    error WinningProposalPendingExecution();
     error LPPositionNotRegistered();
     error EmptySeedLiquidity();
     error GovernanceExecutorNotSet();
