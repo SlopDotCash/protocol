@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test, Vm} from "forge-std/Test.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 
@@ -169,16 +170,30 @@ contract UmiaTwapMilestoneConditionIntegrationTest is TwapMilestoneConditionTest
         PoolKey memory key = ISpotLiquidityVault(hub.ventureLiquidityVault(_venture)).getPoolKey();
 
         hook.increaseCoarseCardinalityNext(key, 768);
-        vm.warp(block.timestamp + 30 days);
-        for (uint256 i = 0; i < 110; i++) {
-            vm.warp(block.timestamp + 1 hours);
+        PoolId id = PoolIdLibrary.toId(key);
+        (uint16 initialIndex,, uint16 fineCapacity) = hook.oracleStates(id);
+        assertEq(fineCapacity, 2048, "Exercise the production fine-ring capacity");
+        uint256 burstStart = vm.getBlockTimestamp() + 30 days;
+        uint256 writes = uint256(fineCapacity) + 1;
+        // More than a full ring of distinct seconds discards the 30-day fine history
+        // without also consuming the coarse ring's month-scale retention.
+        for (uint256 i = 0; i < writes; i++) {
+            vm.warp(burstStart + i + 1);
             _swapSpot(_venture, 0.01e18, i % 2 == 0);
         }
+        assertEq(vm.getBlockTimestamp(), burstStart + writes, "Every swap advanced time");
+        (uint16 finalIndex, uint16 finalCapacity,) = hook.oracleStates(id);
+        assertEq(finalCapacity, fineCapacity);
+        assertEq(finalIndex, (uint256(initialIndex) + writes) % fineCapacity, "The fine ring wrapped");
+        (uint32 oldestTs,,, bool oldestInitialized) = hook.getObservation(id, (finalIndex + 1) % finalCapacity);
+        assertTrue(oldestInitialized);
+        uint32 targetTs = uint32(vm.getBlockTimestamp() - 30 days);
+        assertGt(oldestTs, targetTs, "The requested month predates retained fine history");
 
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = 30 days;
         secondsAgos[1] = 0;
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSignature("TargetPredatesOldestObservation(uint32,uint32)", oldestTs, targetTs));
         hook.observe(key, secondsAgos);
 
         _register(1);

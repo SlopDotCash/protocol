@@ -451,17 +451,32 @@ contract UmiaLBPOracleTest is Test, PosmTestSetup {
         bool zeroForOne = Currency.unwrap(poolKey.currency0) == address(currency);
 
         umiaHook.increaseCoarseCardinalityNext(poolKey, 768);
-
-        for (uint256 i = 0; i < 745; i++) {
-            vm.warp(block.timestamp + 1 hours);
+        PoolId id = poolKey.toId();
+        (uint16 initialIndex,, uint16 fineCapacity) = umiaHook.oracleStates(id);
+        assertEq(fineCapacity, 2048, "Exercise the production fine-ring capacity");
+        uint256 start = vm.getBlockTimestamp();
+        uint256 writes = 745 * 3;
+        // Three writes an hour fill and wrap the fine ring in under 30 days,
+        // while 745 hourly coarse checkpoints retain the entire monthly window.
+        for (uint256 i = 0; i < writes; i++) {
+            vm.warp(start + (i + 1) * 20 minutes);
             _doSwap(0.01e18, i % 2 == 0 ? zeroForOne : !zeroForOne);
         }
+        assertGt(writes, fineCapacity);
+        assertEq(vm.getBlockTimestamp(), start + 745 hours, "Every swap advanced time");
+        (uint16 finalIndex, uint16 finalCapacity,) = umiaHook.oracleStates(id);
+        assertEq(finalCapacity, fineCapacity);
+        assertEq(finalIndex, (uint256(initialIndex) + writes) % fineCapacity, "The fine ring wrapped");
+        (uint32 oldestTs,,, bool oldestInitialized) = umiaHook.getObservation(id, (finalIndex + 1) % finalCapacity);
+        assertTrue(oldestInitialized);
+        uint32 targetTs = uint32(vm.getBlockTimestamp() - 30 days);
+        assertGt(oldestTs, targetTs, "The requested month predates retained fine history");
 
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = 30 days;
         secondsAgos[1] = 0;
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSignature("TargetPredatesOldestObservation(uint32,uint32)", oldestTs, targetTs));
         umiaHook.observe(poolKey, secondsAgos);
 
         (int48[] memory tickCumulatives,) = umiaHook.observeLong(poolKey, secondsAgos);
