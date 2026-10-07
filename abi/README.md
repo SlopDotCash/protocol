@@ -119,3 +119,7 @@ import { umiaHubAbi, allErrorsAbi, getContractAddress } from "umia-abi";
 import umiaHub from "umia-abi/json/UmiaHub.json";
 import addresses from "umia-abi/addresses.json";
 ```
+
+## Standalone source refresh
+
+Install the pinned sources with `python3 script/install-dependencies.py` from the repository root, then run `bun install` and `bun run codegen` in `abi/`. Codegen updates typed/raw ABI definitions and preserves deployment address records. `bun run typecheck` checks the generated SDK. Address changes use the separate `addresses` command and require the original deployment registry; a source security patch is not a new chain deployment.

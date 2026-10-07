@@ -1,213 +1,213 @@
 [
   {
-    "type": "constructor",
     "inputs": [
       {
+        "internalType": "address",
         "name": "_hub",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "nonpayable",
+    "type": "constructor"
   },
   {
-    "type": "function",
-    "name": "HUB",
     "inputs": [],
+    "name": "InvalidAction",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidActionVersion",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidExecutor",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidParams",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidPayload",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidPayloadEncoding",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidVersion",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "LiquidationActive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "LiquidationMustBeFinal",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyMarketCore",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ReentrancyGuardReentrantCall",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TooManyActions",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "UnsupportedAction",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "venture",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "marketId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "proposalId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum GovernanceTypes.ActionType",
+        "name": "actionType",
+        "type": "uint8"
+      }
+    ],
+    "name": "GovernanceActionExecuted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "venture",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "marketId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "proposalId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "planHash",
+        "type": "bytes32"
+      }
+    ],
+    "name": "GovernancePlanExecuted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "venture",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newImplementation",
+        "type": "address"
+      }
+    ],
+    "name": "ImplementationOptOut",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "HUB",
     "outputs": [
       {
+        "internalType": "contract IUmiaHub",
         "name": "",
-        "type": "address",
-        "internalType": "contract IUmiaHub"
+        "type": "address"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "view",
+    "type": "function"
   },
   {
-    "type": "function",
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "venture",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "marketId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "proposalId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bytes",
+        "name": "executionPayload",
+        "type": "bytes"
+      }
+    ],
     "name": "executeProposal",
-    "inputs": [
-      {
-        "name": "venture",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "marketId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "executionPayload",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "nonpayable",
+    "type": "function"
   },
   {
-    "type": "function",
+    "inputs": [
+      {
+        "internalType": "bytes",
+        "name": "executionPayload",
+        "type": "bytes"
+      }
+    ],
     "name": "validatePayload",
-    "inputs": [
-      {
-        "name": "executionPayload",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
     "outputs": [],
-    "stateMutability": "pure"
-  },
-  {
-    "type": "event",
-    "name": "GovernanceActionExecuted",
-    "inputs": [
-      {
-        "name": "venture",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "marketId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "actionType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum GovernanceTypes.ActionType"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "GovernancePlanExecuted",
-    "inputs": [
-      {
-        "name": "venture",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "marketId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "planHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ImplementationOptOut",
-    "inputs": [
-      {
-        "name": "venture",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newImplementation",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "InvalidAction",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidActionVersion",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidExecutor",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidParams",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidPayload",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidPayloadEncoding",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidVersion",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LiquidationActive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LiquidationMustBeFinal",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OnlyMarketCore",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReentrancyGuardReentrantCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TooManyActions",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "UnsupportedAction",
-    "inputs": []
+    "stateMutability": "pure",
+    "type": "function"
   }
 ]

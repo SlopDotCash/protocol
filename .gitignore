@@ -12,7 +12,7 @@
 /cache/
 /out-*/
 /cache-*/
-/abi/node_modules/
+/abi/node_modules
 /audit/review-*/
 /audit/*.log
 /all-solidity.md

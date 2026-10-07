@@ -5,9 +5,13 @@ on:
 permissions:
   contents: read
 jobs:
-  contracts:
+  contract-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [markets, governance, launchpad, liquidation, periphery, vesting, reclaim, libraries, proxy, fork, security]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
@@ -15,9 +19,43 @@ jobs:
           version: v1.7.1
       - name: Install pinned dependency sources
         run: python3 script/install-dependencies.py
-      - name: Run contract tests and invariants
-        run: forge test
+      - name: Run suite tests and invariants
+        run: forge test --match-path 'test/${{ matrix.suite }}/*.t.sol'
+  artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        with:
+          version: v1.7.1
+      - name: Install pinned dependency sources
+        run: python3 script/install-dependencies.py
+      - name: Compile all published contracts
+        run: >-
+          forge build src test/mocks/MockERC20.sol
+          lib/continuous-clearing-auction/src/ContinuousClearingAuction.sol
+          lib/continuous-clearing-auction/src/lens/AuctionStateLens.sol
+          lib/continuous-clearing-auction/src/lens/CCALens.sol
       - name: Check contract deployment sizes
         run: bash check-contract-sizes.sh
+      - name: Check published ABI definitions
+        run: python3 script/check-exported-abis.py
       - name: Check source licenses
         run: bash check-licenses.sh
+      - name: Preserve compiled artifacts for verification
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: compiled-contracts
+          path: out/
+          retention-days: 7
+  verification:
+    runs-on: ubuntu-latest
+    needs: [contract-tests, artifacts]
+    if: always()
+    steps:
+      - name: Require all suites and artifact checks
+        run: |
+          test '${{ needs.contract-tests.result }}' = success
+          test '${{ needs.artifacts.result }}' = success

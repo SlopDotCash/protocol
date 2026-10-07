@@ -1,25 +1,25 @@
 [
   {
-    "type": "function",
-    "name": "exitOutbidBid",
     "inputs": [
       {
+        "internalType": "contract IContinuousClearingAuction",
         "name": "auction",
-        "type": "address",
-        "internalType": "contract IContinuousClearingAuction"
+        "type": "address"
       },
       {
+        "internalType": "uint256",
         "name": "bidId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "uint256"
       },
       {
+        "internalType": "uint64",
         "name": "lastFullyFilledCheckpointBlock",
-        "type": "uint64",
-        "internalType": "uint64"
+        "type": "uint64"
       }
     ],
+    "name": "exitOutbidBid",
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "nonpayable",
+    "type": "function"
   }
 ]

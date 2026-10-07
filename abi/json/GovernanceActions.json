@@ -1,41 +1,41 @@
 [
   {
-    "type": "event",
-    "name": "ImplementationOptOut",
+    "inputs": [],
+    "name": "InvalidAction",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidActionVersion",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidParams",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "UnsupportedAction",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
     "inputs": [
       {
-        "name": "venture",
-        "type": "address",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "address",
+        "name": "venture",
+        "type": "address"
       },
       {
-        "name": "newImplementation",
-        "type": "address",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "address",
+        "name": "newImplementation",
+        "type": "address"
       }
     ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "InvalidAction",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidActionVersion",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidParams",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "UnsupportedAction",
-    "inputs": []
+    "name": "ImplementationOptOut",
+    "type": "event"
   }
 ]

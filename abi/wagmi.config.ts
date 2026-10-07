@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     foundry({
       project: "../",
-      forge: { clean: true, build: true },
+      forge: { clean: false, build: true },
       include: [...FOUNDRY_ARTIFACT_PATHS],
       // `include` is explicit, so the exclude list only guards against
       // accidental cross-matches. Don't blanket-exclude `interfaces/**`

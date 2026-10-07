@@ -1,17 +1,17 @@
 [
   {
-    "type": "error",
+    "inputs": [],
     "name": "InvalidPayloadEncoding",
-    "inputs": []
+    "type": "error"
   },
   {
-    "type": "error",
+    "inputs": [],
     "name": "InvalidVersion",
-    "inputs": []
+    "type": "error"
   },
   {
-    "type": "error",
+    "inputs": [],
     "name": "TooManyActions",
-    "inputs": []
+    "type": "error"
   }
 ]

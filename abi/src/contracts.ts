@@ -15,6 +15,11 @@ export const CONTRACTS = [
   "AuctionStateLens",
   "CCALens",
   "GovernanceExecutor",
+  "VentureVestingAuthority",
+  "UmiaTwapMilestoneCondition",
+  "YieldPositionGuardian",
+  "SimpleLiquidator",
+  "Reclaim",
 ] as const;
 
 // Interfaces with no in-scope implementer — SDK consumers (e.g. anyone

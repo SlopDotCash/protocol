@@ -39,12 +39,12 @@
   "scripts": {
     "addresses": "bun run src/gen-addresses.ts",
     "build": "tsc -p tsconfig.build.json && bun run fix-dist-extensions.ts",
-    "codegen": "wagmi generate && bun run src/dump-json.ts && bun run src/gen-addresses.ts",
+    "codegen": "wagmi generate && bun run src/dump-json.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
-    "@wagmi/cli": "catalog:",
-    "typescript": "catalog:"
+    "@types/node": "26.6.4",
+    "@wagmi/cli": "2.10.0",
+    "typescript": "7.0.2"
   }
 }

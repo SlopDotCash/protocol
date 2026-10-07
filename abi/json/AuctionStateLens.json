@@ -1,98 +1,98 @@
 [
   {
-    "type": "function",
-    "name": "revertWithState",
-    "inputs": [
-      {
-        "name": "auction",
-        "type": "address",
-        "internalType": "contract IContinuousClearingAuction"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "inputs": [],
+    "name": "CheckpointFailed",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "state",
+    "inputs": [],
+    "name": "InvalidRevertReasonLength",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
+        "internalType": "contract IContinuousClearingAuction",
         "name": "auction",
-        "type": "address",
-        "internalType": "contract IContinuousClearingAuction"
+        "type": "address"
       }
     ],
+    "name": "revertWithState",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "contract IContinuousClearingAuction",
+        "name": "auction",
+        "type": "address"
+      }
+    ],
+    "name": "state",
     "outputs": [
       {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct AuctionState",
         "components": [
           {
-            "name": "checkpoint",
-            "type": "tuple",
-            "internalType": "struct Checkpoint",
             "components": [
               {
+                "internalType": "uint256",
                 "name": "clearingPrice",
-                "type": "uint256",
-                "internalType": "uint256"
+                "type": "uint256"
               },
               {
+                "internalType": "ValueX7",
                 "name": "currencyRaisedAtClearingPriceQ96X7",
-                "type": "uint256",
-                "internalType": "ValueX7"
+                "type": "uint256"
               },
               {
+                "internalType": "uint256",
                 "name": "cumulativeMpsPerPrice",
-                "type": "uint256",
-                "internalType": "uint256"
+                "type": "uint256"
               },
               {
+                "internalType": "uint24",
                 "name": "cumulativeMps",
-                "type": "uint24",
-                "internalType": "uint24"
+                "type": "uint24"
               },
               {
+                "internalType": "uint64",
                 "name": "prev",
-                "type": "uint64",
-                "internalType": "uint64"
+                "type": "uint64"
               },
               {
+                "internalType": "uint64",
                 "name": "next",
-                "type": "uint64",
-                "internalType": "uint64"
+                "type": "uint64"
               }
-            ]
+            ],
+            "internalType": "struct Checkpoint",
+            "name": "checkpoint",
+            "type": "tuple"
           },
           {
+            "internalType": "uint256",
             "name": "currencyRaised",
-            "type": "uint256",
-            "internalType": "uint256"
+            "type": "uint256"
           },
           {
+            "internalType": "uint256",
             "name": "totalCleared",
-            "type": "uint256",
-            "internalType": "uint256"
+            "type": "uint256"
           },
           {
+            "internalType": "bool",
             "name": "isGraduated",
-            "type": "bool",
-            "internalType": "bool"
+            "type": "bool"
           }
-        ]
+        ],
+        "internalType": "struct AuctionState",
+        "name": "",
+        "type": "tuple"
       }
     ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "error",
-    "name": "CheckpointFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidRevertReasonLength",
-    "inputs": []
+    "stateMutability": "nonpayable",
+    "type": "function"
   }
 ]
