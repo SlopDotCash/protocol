@@ -114,10 +114,10 @@ ladders alike.
   if already closed.
 - `recoverForfeitedOptions(allocation)` — treasury-only recovery of expired, unexercised option
   collateral from an allocation funded through this adapter. The grant enforces termination and
-  its exercise deadline; recovered venture tokens return to the treasury.
+  its exercise deadline; the allocation’s registered funding token returns to the treasury.
 - `repurchaseRestrictedTokens(allocation, amount)` — treasury-only restricted-token repurchase.
   Governance must fund the adapter with the payment token in the same transaction. The adapter
-  approves only the quoted payment, clears approval afterward, and returns recovered venture tokens
+  approves only the quoted payment, clears approval afterward, and returns the allocation’s registered funding tokens
   and unused payment to the treasury. Both recovery methods reject liquidation and allocations of
   the wrong type or token, and cannot adopt grants funded through another adapter.
 - `bind(ventureId)` — resolve the treasury from the Hub and lock it in (deployer-gated, write-once),

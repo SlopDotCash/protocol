@@ -25,6 +25,9 @@ contract VentureVestingRecoverySecurityTest is Test {
     MockERC20 payment;
     address option;
     address restricted;
+    MockERC20 otherToken;
+    address otherOption;
+    address otherRestricted;
 
     function setUp() public {
         vm.warp(1_000_000);
@@ -44,6 +47,11 @@ contract VentureVestingRecoverySecurityTest is Test {
         token.approve(address(adapter), type(uint256).max);
         option = _create(metavestController.metavestType.TokenOption);
         restricted = _create(metavestController.metavestType.RestrictedTokenAward);
+        otherToken = new MockERC20("Other funded grant", "OTHER", 18);
+        otherToken.mint(address(this), 2_000 ether);
+        otherToken.approve(address(adapter), type(uint256).max);
+        otherOption = _createWithToken(metavestController.metavestType.TokenOption, address(otherToken));
+        otherRestricted = _createWithToken(metavestController.metavestType.RestrictedTokenAward, address(otherToken));
         IUmiaHub.VentureInfo memory info = IUmiaHub.VentureInfo(1, TREASURY, "venture", 0);
         vm.mockCall(HUB, abi.encodeWithSelector(IUmiaHub.ventureById.selector, 1), abi.encode(info));
         vm.mockCall(TREASURY, abi.encodeWithSelector(IVenture.token.selector), abi.encode(address(token)));
@@ -57,6 +65,10 @@ contract VentureVestingRecoverySecurityTest is Test {
     }
 
     function _create(metavestController.metavestType kind) internal returns (address) {
+        return _createWithToken(kind, address(token));
+    }
+
+    function _createWithToken(metavestController.metavestType kind, address grantToken) internal returns (address) {
         BaseAllocation.Allocation memory allocation = BaseAllocation.Allocation({
             tokenStreamTotal: 1_000 ether,
             vestingCliffCredit: 0,
@@ -65,14 +77,14 @@ contract VentureVestingRecoverySecurityTest is Test {
             vestingStartTime: uint48(block.timestamp),
             unlockRate: 1 ether,
             unlockStartTime: uint48(block.timestamp),
-            tokenContract: address(token)
+            tokenContract: grantToken
         });
         bytes memory data = abi.encodeCall(
             controller.createMetavest,
             (kind, GRANTEE, allocation, new BaseAllocation.Milestone[](0), 1 ether, address(payment), 1 days, 0)
         );
         IVentureVestingAuthority.PriceProgramInput memory program;
-        return adapter.fundGenesisGrant(address(token), 1_000 ether, data, program);
+        return adapter.fundGenesisGrant(grantToken, 1_000 ether, data, program);
     }
 
     function test_expiredOptionCollateralReturnsToTreasury() public {
@@ -166,5 +178,79 @@ contract VentureVestingRecoverySecurityTest is Test {
         vm.expectRevert(IVentureVestingAuthority.LiquidationActive.selector);
         adapter.repurchaseRestrictedTokens(restricted, 1);
         vm.stopPrank();
+    }
+
+    function test_registeredNonVentureOptionCollateralIsRecoverable() public {
+        vm.prank(TREASURY);
+        adapter.terminateGrant(otherOption);
+        // Non-venture genesis grants are permitted; their collateral must remain recoverable too.
+        adapter.sweep(address(otherToken));
+        vm.warp(TokenOptionAllocation(otherOption).shortStopTime() + 1);
+        vm.prank(TREASURY);
+        adapter.recoverForfeitedOptions(otherOption);
+        assertEq(otherToken.balanceOf(TREASURY), 1_000 ether);
+        assertEq(otherToken.balanceOf(otherOption), 0);
+    }
+
+    function test_registeredNonVentureRestrictedCollateralIsRecoverable() public {
+        vm.prank(TREASURY);
+        adapter.terminateGrant(otherRestricted);
+        adapter.sweep(address(otherToken));
+        vm.warp(block.timestamp + 1 days + 1);
+        payment.mint(address(adapter), 900 ether);
+        vm.prank(TREASURY);
+        adapter.repurchaseRestrictedTokens(otherRestricted, 900 ether);
+        assertEq(otherToken.balanceOf(TREASURY), 900 ether);
+        assertEq(payment.allowance(address(adapter), otherRestricted), 0);
+        assertEq(otherToken.balanceOf(address(adapter)), 0);
+    }
+
+    function _aliasFixture() internal returns (metavestController fresh, VentureVestingAuthority freshAdapter) {
+        fresh = new metavestController(
+            address(this),
+            address(this),
+            address(new VestingAllocationFactory()),
+            address(new TokenOptionFactory()),
+            address(new RestrictedTokenFactory())
+        );
+        freshAdapter = new VentureVestingAuthority(HUB, address(fresh));
+        fresh.initiateAuthorityUpdate(address(freshAdapter));
+        freshAdapter.claim();
+    }
+
+    function test_restrictedPaymentCannotAliasCollateralAndFundingRollsBack() public {
+        (metavestController fresh, VentureVestingAuthority freshAdapter) = _aliasFixture();
+        BaseAllocation.Allocation memory allocation = BaseAllocation.Allocation({
+            tokenStreamTotal: 1_000 ether,
+            vestingCliffCredit: 0,
+            unlockingCliffCredit: 0,
+            vestingRate: 1 ether,
+            vestingStartTime: uint48(block.timestamp + 1 days),
+            unlockRate: 1 ether,
+            unlockStartTime: uint48(block.timestamp + 1 days),
+            tokenContract: address(token)
+        });
+        bytes memory data = abi.encodeCall(
+            fresh.createMetavest,
+            (
+                metavestController.metavestType.RestrictedTokenAward,
+                GRANTEE,
+                allocation,
+                new BaseAllocation.Milestone[](0),
+                1 ether,
+                address(token),
+                1 days,
+                0
+            )
+        );
+        token.mint(address(this), 1_000 ether);
+        token.approve(address(freshAdapter), 1_000 ether);
+        uint256 beforeBalance = token.balanceOf(address(this));
+        IVentureVestingAuthority.PriceProgramInput memory program;
+        vm.expectRevert(IVentureVestingAuthority.PaymentTokenMatchesAllocationToken.selector);
+        freshAdapter.fundGenesisGrant(address(token), 1_000 ether, data, program);
+        assertEq(token.balanceOf(address(this)), beforeBalance);
+        assertEq(token.balanceOf(address(freshAdapter)), 0);
+        assertEq(token.allowance(address(freshAdapter), address(fresh)), 0);
     }
 }

@@ -17,6 +17,8 @@ interface IVentureVestingAuthority {
     error NotCreateMetavest();
     error InvalidControllerReturn();
     error InvalidRecoveryAllocation();
+    /// @dev Restricted awards must not mix vesting collateral with freely claimable repurchase payments.
+    error PaymentTokenMatchesAllocationToken();
     error RecoveryWindowOpen();
     /// @dev A price program is write-once per allocation.
     error ProgramAlreadyRegistered();

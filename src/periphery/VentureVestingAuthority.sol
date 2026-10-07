@@ -114,7 +114,7 @@ contract VentureVestingAuthority is IVentureVestingAuthority {
     mapping(address allocation => PriceProgram) internal _programs;
     /// @dev Only controller-created allocations funded here may receive recovery calls or allowances.
     ///      This immutable adapter cannot adopt grants funded through a previous adapter.
-    mapping(address allocation => bool) private _fundedAllocations;
+    mapping(address allocation => address) private _fundedAllocationToken;
 
     constructor(address _hub, address _controller) {
         if (_hub == address(0) || _controller == address(0)) revert ZeroAddress();
@@ -285,34 +285,39 @@ contract VentureVestingAuthority is IVentureVestingAuthority {
 
     /// @inheritdoc IVentureVestingAuthority
     function recoverForfeitedOptions(address allocation) external {
-        _requireRecoveryAllocation(allocation, 2);
+        address token = _requireRecoveryAllocation(allocation, 2);
         IMetaVestRecoveryAllocation grant = IMetaVestRecoveryAllocation(allocation);
         // MetaVesT permits exercises at the deadline itself; recovery must wait until after it.
         if (block.timestamp <= grant.shortStopTime()) revert RecoveryWindowOpen();
         grant.recoverForfeitTokens();
-        _sweep(ventureToken);
+        _sweep(token);
     }
 
     /// @inheritdoc IVentureVestingAuthority
     function repurchaseRestrictedTokens(address allocation, uint256 amount) external {
-        _requireRecoveryAllocation(allocation, 3);
+        address token = _requireRecoveryAllocation(allocation, 3);
         IMetaVestRecoveryAllocation grant = IMetaVestRecoveryAllocation(allocation);
         address paymentToken = grant.paymentToken();
         uint256 payment = grant.getPaymentAmount(amount);
         IERC20(paymentToken).forceApprove(allocation, payment);
         grant.repurchaseTokens(amount);
         IERC20(paymentToken).forceApprove(allocation, 0);
-        _sweep(ventureToken);
-        if (paymentToken != ventureToken) _sweep(paymentToken);
+        _sweep(token);
+        if (paymentToken != token) _sweep(paymentToken);
     }
 
-    function _requireRecoveryAllocation(address allocation, uint256 expectedType) internal view {
+    function _requireRecoveryAllocation(address allocation, uint256 expectedType)
+        internal
+        view
+        returns (address token)
+    {
         if (!bound || msg.sender != treasury) revert NotTreasury();
         if (IVenture(treasury).liquidationActive()) revert LiquidationActive();
-        if (!_fundedAllocations[allocation]) revert InvalidRecoveryAllocation();
+        address registeredToken = _fundedAllocationToken[allocation];
+        if (registeredToken == address(0)) revert InvalidRecoveryAllocation();
         IMetaVestAllocationView grant = IMetaVestAllocationView(allocation);
-        (,,,,,,, address token) = grant.getMetavestDetails();
-        if (token != ventureToken || grant.getVestingType() != expectedType) revert InvalidRecoveryAllocation();
+        (,,,,,,, token) = grant.getMetavestDetails();
+        if (token != registeredToken || grant.getVestingType() != expectedType) revert InvalidRecoveryAllocation();
     }
 
     /// @dev Move any idle balance of `token` to the treasury. No-op at zero so callers can flush
@@ -489,18 +494,18 @@ contract VentureVestingAuthority is IVentureVestingAuthority {
     /// @dev Reads `getMetavestDetails()` once and returns the allocation's token so the caller can
     ///      pass it to `_registerPriceProgram` without a second staticcall + positional decode.
     function _emitAllocationFunded(address allocation) internal returns (address token) {
-        _fundedAllocations[allocation] = true;
         IMetaVestAllocationView alloc = IMetaVestAllocationView(allocation);
         uint256 streamTotal;
         (streamTotal,,,,,,, token) = alloc.getMetavestDetails();
+        uint256 vestingType = alloc.getVestingType();
+        // RestrictedTokenAward pays its entire payment-token balance to the grantee without a
+        // vesting check. Aliasing that currency to collateral would make the whole grant liquid.
+        if (vestingType == 3 && IMetaVestRecoveryAllocation(allocation).paymentToken() == token) {
+            revert PaymentTokenMatchesAllocationToken();
+        }
+        _fundedAllocationToken[allocation] = token;
         emit AllocationFunded(
-            controller,
-            allocation,
-            alloc.grantee(),
-            token,
-            uint8(alloc.getVestingType()),
-            streamTotal,
-            alloc.milestoneAwardTotal()
+            controller, allocation, alloc.grantee(), token, uint8(vestingType), streamTotal, alloc.milestoneAwardTotal()
         );
     }
 }
