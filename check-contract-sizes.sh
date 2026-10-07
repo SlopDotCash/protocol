@@ -18,6 +18,17 @@ CONTRACTS=(
     "GovernanceExecutor"
     "Venture"
     "UmiaLBPFactory"
+    "UmiaLBP"
+    "UmiaMarketStake"
+    "SpotLiquidityVault"
+    "VentureToken"
+    "VentureVestingAuthority"
+    "UmiaTwapMilestoneCondition"
+    "YieldPositionGuardian"
+    "CCAExitHelper"
+    "ConditionalMarketOracle"
+    "SimpleLiquidator"
+    "Reclaim"
 )
 
 failed=0
