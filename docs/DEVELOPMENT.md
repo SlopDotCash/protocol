@@ -1,12 +1,12 @@
 # Smart Contracts Development Guide
 
-This guide is for contributors working inside `smart-contracts/`.
+This guide is for contributors working in this standalone contracts repository.
 
 ## 1) Prerequisites
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
 - Git
-- Access to required submodules under `smart-contracts/lib/`
+- Python 3.12+ to restore pinned dependency sources
 
 Optional for local infra scripts:
 - Anvil
@@ -16,20 +16,18 @@ Optional for local infra scripts:
 From repository root:
 
 ```bash
-cd smart-contracts
 forge --version
 ```
 
-If submodules are not initialized yet:
+Restore the pinned dependency sources into an empty `lib/` directory:
 
 ```bash
-git submodule update --init --recursive
+python3 script/install-dependencies.py
 ```
 
 ## 3) Build and test
 
 ```bash
-cd smart-contracts
 forge build
 forge test
 ```
@@ -61,7 +59,6 @@ For a full new-chain deployment checklist, see `docs/NEW_CHAIN_DEPLOYMENT.md`.
 ### Deploy protocol contracts (devnet style)
 
 ```bash
-cd smart-contracts
 forge script script/Deploy.s.sol:Deploy \
   --rpc-url <RPC_URL> \
   --broadcast
@@ -74,7 +71,6 @@ Expected environment variables used by script include:
 ### Deploy local Uniswap v4 infra (for fresh local chains)
 
 ```bash
-cd smart-contracts
 forge script script/DeployV4Infra.s.sol:DeployV4Infra \
   --rpc-url http://localhost:8545 \
   --broadcast

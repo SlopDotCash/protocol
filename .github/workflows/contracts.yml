@@ -1,0 +1,23 @@
+name: Contract security checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        with:
+          version: v1.7.1
+      - name: Install pinned dependency sources
+        run: python3 script/install-dependencies.py
+      - name: Run contract tests and invariants
+        run: forge test
+      - name: Check contract deployment sizes
+        run: bash check-contract-sizes.sh
+      - name: Check source licenses
+        run: bash check-licenses.sh

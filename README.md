@@ -5,6 +5,7 @@ Solidity contracts for Umia: token launches (LBP auctions), Uniswap v4 spot mark
 ## Quick start
 
 ```bash
+python3 script/install-dependencies.py
 forge build
 forge test
 ```
@@ -31,6 +32,8 @@ Format before committing:
 ```bash
 forge fmt
 ```
+
+Dependencies are restored at the revisions in `foundry.lock`, including the nested gitlink revisions required by the remappings. The installer needs Python 3.12+ and refuses to overwrite existing unmanaged library directories.
 
 ## Source layout
 

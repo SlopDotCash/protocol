@@ -5,3 +5,17 @@
 
 # forge script simulations (the root .gitignore rule only covers the re-rooted public mirror)
 /broadcast/**/dry-run/
+
+# Reproducible local dependency/build outputs
+/lib/
+/out/
+/cache/
+/out-*/
+/cache-*/
+/abi/node_modules/
+/audit/review-*/
+/audit/*.log
+/all-solidity.md
+
+# Python installer bytecode
+__pycache__/
