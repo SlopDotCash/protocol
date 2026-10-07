@@ -318,7 +318,7 @@ contract UmiaLBP is IDistributor, ReentrancyGuard, IUmiaLBP, BlockNumberish {
     // Sweep Functions
     // ─────────────────────────────────────────────────────────
 
-    /// @notice Returns the launch allocation to the treasury if the auction fails to graduate.
+    /// @notice Returns the launch allocation when the auction fails or raises no currency.
     /// @dev Failed-auction bid refunds stay in the CCA. Checkpoint before deciding graduation:
     ///      the cached auction state may otherwise omit bids filled in its final blocks.
     function recoverFailedAuction() external nonReentrant {
@@ -328,7 +328,9 @@ contract UmiaLBP is IDistributor, ReentrancyGuard, IUmiaLBP, BlockNumberish {
         }
         ContinuousClearingAuction cca = ContinuousClearingAuction(address(initializer));
         cca.checkpoint();
-        if (cca.isGraduated()) revert SweepNotAllowed();
+        // A zero-minimum auction formally graduates even with no bids, but cannot migrate:
+        // there is no currency with which to seed liquidity. Its entire token supply is unsold.
+        if (cca.isGraduated() && cca.currencyRaised() != 0) revert SweepNotAllowed();
         if (cca.sweepUnsoldTokensBlock() == 0) cca.sweepUnsoldTokens();
 
         uint256 balance = Currency.wrap(token).balanceOf(address(this));
