@@ -202,3 +202,7 @@ Settlement takes the same path in reverse: `SettlementLib` calls `returnFromDeci
 | `test/launchpad/UmiaLBPOracle.t.sol`           | Oracle integration tests, including coarse-ring servability, gap extrapolation, and segmented-path precision                   |
 | `test/periphery/UmiaHook.t.sol`                | Hook unit tests, including coarse-ring bucket gating, ring independence, clamp cadence, and grow gas budget                    |
 | `test/markets/DecisionMarketOracleTruncation.t.sol` | Truncation behavior tests                                                                                                 |
+
+## Security review capacity update
+
+New vaults bootstrap a fine ring of 2,048 slots. Since writes are deduplicated per second, this retains the complete 30-minute vault guard window at the maximum observation cadence. Slot allocation is lazy: growth updates the requested capacity and actual observations initialize slots as needed. A newly used slot costs a cold storage write; growing the ring no longer pre-writes every slot in one transaction. The coarse ring starts at 100 slots; provision capacity and history for the configured milestone window. Existing immutable deployments keep their old bootstrap policy.

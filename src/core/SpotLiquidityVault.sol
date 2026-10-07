@@ -72,8 +72,9 @@ contract SpotLiquidityVault is ISpotLiquidityVault, IUnlockCallback, ReentrancyG
     int24 internal constant MAX_TICK_DEVIATION = 1000;
 
     /// @notice Oracle ring-buffer cardinality seeded at bootstrap; anyone can grow it further
-    ///         via the hook's `increaseCardinalityNext`.
-    uint16 internal constant INITIAL_ORACLE_CARDINALITY = 100;
+    ///         via the hook's `increaseCardinalityNext`. 2,048 slots cover the 30-minute window
+    ///         even at one distinct timestamp per second, with margin.
+    uint16 internal constant INITIAL_ORACLE_CARDINALITY = 2048;
 
     /// @notice Coarse-ring seed. Small so the grow fits under Base's 2^24 per-tx gas cap; the cron
     ///         grows it to full span after.

@@ -214,16 +214,14 @@ library SpotMarketOracle {
     /// @param current The current next cardinality of the oracle array
     /// @param next The proposed next cardinality which will be populated in the oracle array
     /// @return next The next cardinality which will be populated in the oracle array
-    function grow(Observation[65535] storage self, uint16 current, uint16 next) internal returns (uint16) {
+    function grow(Observation[65535] storage, uint16 current, uint16 next) internal pure returns (uint16) {
         unchecked {
             if (current == 0) revert OracleCardinalityCannotBeZero();
             // no-op if the passed next value isn't greater than the current next value
             if (next <= current) return current;
-            // store in each slot to prevent fresh SSTOREs in swaps
-            // this data will not be used because the initialized boolean is still false
-            for (uint16 i = current; i < next; i++) {
-                self[i].blockTimestamp = 1;
-            }
+            // Reserve capacity lazily. An empty slot has initialized == false, and write()
+            // populates it on demand. The first write to each slot pays its cold SSTORE cost.
+            // Eager writes to thousands of slots can exceed the transaction gas cap of a chain.
             return next;
         }
     }

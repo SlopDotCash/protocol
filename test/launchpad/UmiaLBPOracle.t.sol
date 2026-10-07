@@ -233,11 +233,25 @@ contract UmiaLBPOracleTest is Test, PosmTestSetup {
 
     // ============ Tests ============
 
+    function test_DefaultBufferRetainsFullWindowAtOneWritePerSecond() public {
+        bool zeroForOne = Currency.unwrap(poolKey.currency0) == address(currency);
+        for (uint256 i = 0; i < 1801; ++i) {
+            vm.warp(block.timestamp + 1);
+            _doSwap(1e12, zeroForOne);
+        }
+        uint32[] memory lookbacks = new uint32[](2);
+        lookbacks[0] = 1800;
+        (int48[] memory cumulatives,) = umiaHook.observe(poolKey, lookbacks);
+        assertEq(cumulatives.length, 2);
+        (, uint16 capacity,) = umiaHook.oracleStates(poolKey.toId());
+        assertEq(capacity, 2048);
+    }
+
     function test_OracleInitializedAfterMigration() public view {
         PoolId id = poolKey.toId();
         (uint16 index, uint16 cardinality, uint16 cardinalityNext) = umiaHook.oracleStates(id);
         assertEq(cardinality, 1);
-        assertEq(cardinalityNext, 100, "Migration should grow cardinalityNext to the bootstrap seed");
+        assertEq(cardinalityNext, 2048, "Migration should grow cardinalityNext to the bootstrap seed");
         assertEq(index, 0);
     }
 
@@ -259,7 +273,7 @@ contract UmiaLBPOracleTest is Test, PosmTestSetup {
         PoolId id = poolKey.toId();
         (uint16 index, uint16 cardinality,) = umiaHook.oracleStates(id);
         assertEq(index, 1, "Oracle index should advance after swap");
-        assertEq(cardinality, 100, "Cardinality should jump to cardinalityNext on first write");
+        assertEq(cardinality, 2048, "Cardinality should jump to cardinalityNext on first write");
     }
 
     function test_TWAPOverWindow() public {
@@ -293,19 +307,19 @@ contract UmiaLBPOracleTest is Test, PosmTestSetup {
         PoolId id = poolKey.toId();
 
         // Migration already set cardinalityNext to the bootstrap seed, grow further to 2000
-        (uint16 oldNext, uint16 newNext) = umiaHook.increaseCardinalityNext(poolKey, 2000);
-        assertEq(oldNext, 100);
-        assertEq(newNext, 2000);
+        (uint16 oldNext, uint16 newNext) = umiaHook.increaseCardinalityNext(poolKey, 4096);
+        assertEq(oldNext, 2048);
+        assertEq(newNext, 4096);
 
         (,, uint16 cardinalityNextAfter) = umiaHook.oracleStates(id);
-        assertEq(cardinalityNextAfter, 2000);
+        assertEq(cardinalityNextAfter, 4096);
     }
 
     function test_IncreaseCardinalityNext_NoOpIfSmaller() public {
         // Migration set cardinalityNext to the bootstrap seed, requesting less is a no-op
         (uint16 oldNext, uint16 newNext) = umiaHook.increaseCardinalityNext(poolKey, 50);
-        assertEq(oldNext, 100);
-        assertEq(newNext, 100);
+        assertEq(oldNext, 2048);
+        assertEq(newNext, 2048);
     }
 
     function test_MultipleSwapsGrowOracle() public {
@@ -320,7 +334,7 @@ contract UmiaLBPOracleTest is Test, PosmTestSetup {
         PoolId id = poolKey.toId();
         (uint16 index, uint16 cardinality,) = umiaHook.oracleStates(id);
         assertEq(index, 5, "Index should be 5 after 5 swaps");
-        assertEq(cardinality, 100, "Cardinality should match cardinalityNext from migration");
+        assertEq(cardinality, 2048, "Cardinality should match cardinalityNext from migration");
     }
 
     function test_ObserveRevertsForTimestampBeforeInit() public {

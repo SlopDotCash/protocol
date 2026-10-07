@@ -342,6 +342,17 @@ contract UmiaHookOracleTest is Test {
         hook.afterInitialize(LBP, key, uint160(1 << 96), int24(0));
     }
 
+    function test_GrowFullFineCapacityFitsGasCapWithoutEagerWrites() public {
+        vm.prank(POOL_MANAGER);
+        hook.afterInitialize(LBP, key, uint160(1 << 96), int24(0));
+        uint256 beforeGas = gasleft();
+        hook.increaseCardinalityNext(key, 2048);
+        assertLt(beforeGas - gasleft(), 100_000);
+        (uint32 ts,,, bool initialized) = hook.getObservation(key.toId(), 2047);
+        assertEq(ts, 0);
+        assertFalse(initialized);
+    }
+
     function test_IncreaseCardinalityNext_GrowsBuffer() public {
         vm.prank(POOL_MANAGER);
         hook.afterInitialize(LBP, key, uint160(1 << 96), int24(0));
