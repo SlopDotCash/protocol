@@ -318,6 +318,24 @@ contract UmiaLBP is IDistributor, ReentrancyGuard, IUmiaLBP, BlockNumberish {
     // Sweep Functions
     // ─────────────────────────────────────────────────────────
 
+    /// @notice Returns the launch allocation to the treasury if the auction fails to graduate.
+    /// @dev Failed-auction bid refunds stay in the CCA. Checkpoint before deciding graduation:
+    ///      the cached auction state may otherwise omit bids filled in its final blocks.
+    function recoverFailedAuction() external nonReentrant {
+        if (migrated || address(initializer) == address(0)) revert SweepNotAllowed();
+        if (_getBlockNumberish() < uint256(initializer.endBlock()) + hub.migrationDelayBlocks()) {
+            revert SweepNotAllowed();
+        }
+        ContinuousClearingAuction cca = ContinuousClearingAuction(address(initializer));
+        cca.checkpoint();
+        if (cca.isGraduated()) revert SweepNotAllowed();
+        if (cca.sweepUnsoldTokensBlock() == 0) cca.sweepUnsoldTokens();
+
+        uint256 balance = Currency.wrap(token).balanceOf(address(this));
+        if (balance != 0) Currency.wrap(token).transfer(venture, balance);
+        emit FailedAuctionRecovered(venture, balance);
+    }
+
     /// @notice Sweeps leftover tokens to venture
     /// @dev Callable by anyone once the Hub's sweep delay has elapsed since migration.
     function sweepToken() external {

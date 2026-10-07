@@ -40,6 +40,7 @@ interface IUmiaLBP {
     event InitializerCreated(address indexed initializer);
     event TokensSwept(address indexed recipient, uint256 amount);
     event CurrencySwept(address indexed recipient, uint256 amount);
+    event FailedAuctionRecovered(address indexed recipient, uint256 amount);
 
     // ─────────────────────────────────────────────────────────
     // View Functions
@@ -67,6 +68,7 @@ interface IUmiaLBP {
     // ─────────────────────────────────────────────────────────
 
     function migrate() external;
+    function recoverFailedAuction() external;
     function sweepToken() external;
     function sweepCurrency() external;
 }
