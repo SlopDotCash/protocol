@@ -41,6 +41,14 @@ interface ICCAClearingPrice {
     function clearingPrice() external view returns (uint256);
 }
 
+interface IMetaVestRecoveryAllocation {
+    function recoverForfeitTokens() external;
+    function shortStopTime() external view returns (uint256);
+    function repurchaseTokens(uint256 amount) external;
+    function paymentToken() external view returns (address);
+    function getPaymentAmount(uint256 amount) external view returns (uint256);
+}
+
 /// @title VentureVestingAuthority
 /// @notice Per-venture adapter that holds a MetaVesT controller's `authority` role across the
 ///         genesis-to-launch gap and then routes it to the venture treasury. The launch operator
@@ -101,6 +109,9 @@ contract VentureVestingAuthority is IVentureVestingAuthority {
 
     /// @notice Per-allocation price ladder, write-once at grant creation.
     mapping(address allocation => PriceProgram) internal _programs;
+    /// @dev Only controller-created allocations funded here may receive recovery calls or allowances.
+    ///      This immutable adapter cannot adopt grants funded through a previous adapter.
+    mapping(address allocation => bool) private _fundedAllocations;
 
     constructor(address _hub, address _controller) {
         if (_hub == address(0) || _controller == address(0)) revert ZeroAddress();
@@ -256,6 +267,38 @@ contract VentureVestingAuthority is IVentureVestingAuthority {
     function sweep(address token) external {
         if (!bound) revert NotBound();
         _sweep(token);
+    }
+
+    /// @inheritdoc IVentureVestingAuthority
+    function recoverForfeitedOptions(address allocation) external {
+        _requireRecoveryAllocation(allocation, 2);
+        IMetaVestRecoveryAllocation grant = IMetaVestRecoveryAllocation(allocation);
+        // MetaVesT permits exercises at the deadline itself; recovery must wait until after it.
+        if (block.timestamp <= grant.shortStopTime()) revert RecoveryWindowOpen();
+        grant.recoverForfeitTokens();
+        _sweep(ventureToken);
+    }
+
+    /// @inheritdoc IVentureVestingAuthority
+    function repurchaseRestrictedTokens(address allocation, uint256 amount) external {
+        _requireRecoveryAllocation(allocation, 3);
+        IMetaVestRecoveryAllocation grant = IMetaVestRecoveryAllocation(allocation);
+        address paymentToken = grant.paymentToken();
+        uint256 payment = grant.getPaymentAmount(amount);
+        IERC20(paymentToken).forceApprove(allocation, payment);
+        grant.repurchaseTokens(amount);
+        IERC20(paymentToken).forceApprove(allocation, 0);
+        _sweep(ventureToken);
+        if (paymentToken != ventureToken) _sweep(paymentToken);
+    }
+
+    function _requireRecoveryAllocation(address allocation, uint256 expectedType) internal view {
+        if (!bound || msg.sender != treasury) revert NotTreasury();
+        if (IVenture(treasury).liquidationActive()) revert LiquidationActive();
+        if (!_fundedAllocations[allocation]) revert InvalidRecoveryAllocation();
+        IMetaVestAllocationView grant = IMetaVestAllocationView(allocation);
+        (,,,,,,, address token) = grant.getMetavestDetails();
+        if (token != ventureToken || grant.getVestingType() != expectedType) revert InvalidRecoveryAllocation();
     }
 
     /// @dev Move any idle balance of `token` to the treasury. No-op at zero so callers can flush
@@ -432,6 +475,7 @@ contract VentureVestingAuthority is IVentureVestingAuthority {
     /// @dev Reads `getMetavestDetails()` once and returns the allocation's token so the caller can
     ///      pass it to `_registerPriceProgram` without a second staticcall + positional decode.
     function _emitAllocationFunded(address allocation) internal returns (address token) {
+        _fundedAllocations[allocation] = true;
         IMetaVestAllocationView alloc = IMetaVestAllocationView(allocation);
         uint256 streamTotal;
         (streamTotal,,,,,,, token) = alloc.getMetavestDetails();

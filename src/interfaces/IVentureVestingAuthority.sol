@@ -16,6 +16,8 @@ interface IVentureVestingAuthority {
     error GenesisClosed();
     error NotCreateMetavest();
     error InvalidControllerReturn();
+    error InvalidRecoveryAllocation();
+    error RecoveryWindowOpen();
     /// @dev A price program is write-once per allocation.
     error ProgramAlreadyRegistered();
     /// @dev A price program was supplied with no thresholds/multiples.
@@ -143,6 +145,17 @@ interface IVentureVestingAuthority {
     ///      revoked that path. Rejected once the venture is liquidating, matching governance.
     ///      Irreversible: MetaVesT rejects a second terminate.
     function terminateGrant(address allocation) external;
+
+    /// @notice Recover expired, unexercised option collateral to the treasury.
+    /// @dev Only the bound treasury; allocation must have been funded through this adapter.
+    ///      The allocation enforces termination and its exercise deadline. Disabled in liquidation.
+    function recoverForfeitedOptions(address allocation) external;
+
+    /// @notice Repurchase terminated restricted tokens and return them to the treasury.
+    /// @dev Only the bound treasury; pre-fund this adapter with the allocation's payment token
+    ///      in the same governance transaction. Only the exact payment gets temporary approval;
+    ///      unused payment is returned. The allocation enforces eligibility. Disabled in liquidation.
+    function repurchaseRestrictedTokens(address allocation, uint256 amount) external;
 
     /// @notice Terminate a grant and fund a replacement from its clawback, atomically.
     /// @dev Same auth as {terminateGrant}. Must be one call: split across two transactions, anyone
