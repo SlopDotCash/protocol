@@ -110,8 +110,7 @@ contract SimpleLiquidatorTest is Test {
         liquidator.claim();
     }
 
-    function test_claim_revertsOnDoubleClaim() public {
-        // Setup: mint tokens to bob
+    function test_claim_secondClaimWithoutNewTokensReverts() public {
         vm.prank(address(executor));
         venture.mint(bob, 100e18);
         vm.deal(address(venture), 10 ether);
@@ -123,14 +122,51 @@ contract SimpleLiquidatorTest is Test {
 
         _startLiquidation(assets);
 
-        // First claim
         vm.prank(bob);
         liquidator.claim();
 
-        // Second claim should revert
+        // The whole balance was burned, so there is nothing left to claim.
         vm.prank(bob);
-        vm.expectRevert(ILiquidator.AlreadyClaimed.selector);
+        vm.expectRevert(ILiquidator.NothingToClaim.selector);
         liquidator.claim();
+    }
+
+    /// @dev Regression: tokens that reach an address after its first claim (vesting releases, LP
+    ///      exits, transfers) used to be stranded by a per-address one-shot flag.
+    function test_claim_repeatableForTokensReceivedAfterFirstClaim() public {
+        vm.prank(address(executor));
+        venture.mint(bob, 100e18);
+        vm.prank(address(executor));
+        venture.mint(alice, 100e18);
+        vm.deal(address(venture), 10 ether);
+
+        GovernanceTypes.LiquidationAsset[] memory assets = new GovernanceTypes.LiquidationAsset[](1);
+        assets[0] = GovernanceTypes.LiquidationAsset({
+            assetType: GovernanceTypes.AssetType.NATIVE, token: address(0), tokenId: 0
+        });
+
+        _startLiquidation(assets);
+        uint256 snapshot = liquidator.totalSupplySnapshot();
+
+        // Bob claims half his holding's worth, then receives the other half and claims again.
+        vm.prank(bob);
+        qToken.transfer(team1, 50e18);
+        vm.prank(bob);
+        liquidator.claim();
+        vm.prank(team1);
+        qToken.transfer(bob, 50e18);
+        vm.prank(bob);
+        liquidator.claim();
+
+        vm.prank(alice);
+        liquidator.claim();
+
+        // Both 100e18 holders end with the same payout; nothing is stranded or over-paid.
+        // Two partial claims each round down, so allow 1 wei per claim.
+        assertApproxEqAbs(bob.balance, alice.balance, 2, "repeat claim pays the same pro-rata share");
+        assertEq(alice.balance, (10 ether * 100e18) / snapshot, "pro-rata of the fixed snapshot");
+        assertEq(liquidator.totalBurned(), 200e18, "burned total tracks every claim");
+        assertLe(liquidator.totalBurned(), snapshot, "never exceeds snapshot");
     }
 
     function test_claim_proRataDistribution() public {

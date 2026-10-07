@@ -59,7 +59,7 @@ interface ILiquidator {
     /// @return amounts Array of claimable amounts per asset (in same order as liquidationAssets)
     function claimableAmount(address _account) external view returns (uint256[] memory amounts);
 
-    /// @notice Check if account has already claimed
+    /// @notice Check if account has claimed at least once (informational; claims may be repeatable)
     /// @param _account The account to check
     /// @return True if account has claimed
     function hasClaimed(address _account) external view returns (bool);

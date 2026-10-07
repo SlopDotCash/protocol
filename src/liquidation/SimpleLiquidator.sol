@@ -13,8 +13,11 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
 /// @title SimpleLiquidator
 /// @notice A simple pro-rata liquidation strategy for fungible assets.
-/// @dev Supports NATIVE and ERC20 assets only. One-time full claim.
-///      Users burn their entire venture token balance through the venture to claim their pro-rata share.
+/// @dev Supports NATIVE and ERC20 assets only. Users burn their entire venture token balance through
+///      the venture to claim their pro-rata share, and may claim again for tokens received later.
+///      Payouts are `snapshotBalance * burned / totalSupplySnapshot` against a fixed snapshot, and
+///      supply cannot grow once liquidation is active, so repeat claims can never draw more than
+///      the backing; `totalBurned` enforces that bound explicitly.
 contract SimpleLiquidator is ILiquidator, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -44,8 +47,11 @@ contract SimpleLiquidator is ILiquidator, ReentrancyGuard {
     /// @notice Array of assets being liquidated
     LiquidationAssetSnapshot[] internal _liquidationAssets;
 
-    /// @notice Track which accounts have claimed
+    /// @notice Whether an account has claimed at least once. Informational: claims are repeatable.
     mapping(address => bool) public hasClaimed;
+
+    /// @notice Venture tokens burned through claims so far. Never exceeds `totalSupplySnapshot`.
+    uint256 public totalBurned;
 
     /// @notice Internal struct for asset snapshots
     struct LiquidationAssetSnapshot {
@@ -103,8 +109,7 @@ contract SimpleLiquidator is ILiquidator, ReentrancyGuard {
 
             // The venture token is the claim-burn token, not a distributable asset. If it is listed,
             // skip it: paying it back out pro-rata would let a claimant forward the payout to fresh
-            // addresses and claim again (hasClaimed is keyed per-address), drawing more than their
-            // share. Skipping keeps a governance plan that mistakenly lists it fully executable.
+            // addresses and burn it again, drawing more than their share. Skipping keeps a governance plan that mistakenly lists it fully executable.
             if (asset.assetType == GovernanceTypes.AssetType.ERC20 && asset.token == ventureToken) {
                 continue;
             }
@@ -130,13 +135,17 @@ contract SimpleLiquidator is ILiquidator, ReentrancyGuard {
     /// @inheritdoc ILiquidator
     function claim() external override nonReentrant {
         if (!initialized) revert NotInitialized();
-        if (hasClaimed[msg.sender]) revert AlreadyClaimed();
 
         // Get user's venture token balance - must burn ALL of it
         uint256 userBalance = IERC20(ventureToken).balanceOf(msg.sender);
         if (userBalance == 0) revert NothingToClaim();
 
-        // Mark as claimed before external calls (CEI pattern)
+        // Effects before external calls (CEI). A per-address one-shot flag would strand any tokens
+        // that reach the address after its first claim (e.g. vesting releases, LP exits), so claims
+        // are repeatable and solvency rests on the burned total staying within the snapshot.
+        uint256 burned = totalBurned + userBalance;
+        if (burned > totalSupplySnapshot) revert NothingToClaim();
+        totalBurned = burned;
         hasClaimed[msg.sender] = true;
 
         // Burn the tokens via Venture directly from the claimant. This avoids any
@@ -171,10 +180,7 @@ contract SimpleLiquidator is ILiquidator, ReentrancyGuard {
         uint256 assetCount = _liquidationAssets.length;
         amounts = new uint256[](assetCount);
 
-        if (hasClaimed[_account] || userBalance == 0) {
-            // Already claimed or no balance - return zeros
-            return amounts;
-        }
+        if (userBalance == 0) return amounts;
 
         for (uint256 i = 0; i < assetCount; i++) {
             LiquidationAssetSnapshot memory asset = _liquidationAssets[i];
