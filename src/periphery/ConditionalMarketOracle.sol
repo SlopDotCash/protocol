@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {IConditionalMarketOracle} from "../interfaces/IConditionalMarketOracle.sol";
 import {IUmiaHub} from "../interfaces/IUmiaHub.sol";
+import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 
 /// @title ConditionalMarketOracle
 /// @notice Per-proposal time-weighted average of the money-per-venture price (Q112.112).
@@ -105,7 +106,7 @@ contract ConditionalMarketOracle is IConditionalMarketOracle {
         // revert surface when a threshold-calibrated oracle is swapped in.
         if (winningThresholdBps == 0 || winningThresholdBps > 10_000) revert InvalidWinningThreshold();
 
-        uint256 seedPrice = (reserve1 * Q112) / reserve0;
+        uint256 seedPrice = _reservePrice(reserve0, reserve1);
         if (seedPrice > MAX_PRICE_X112) seedPrice = MAX_PRICE_X112;
         if (seedPrice == 0) seedPrice = 1; // a zero anchor would disable the ratio clamp (0 * 2.5 == 0)
 
@@ -134,7 +135,7 @@ contract ConditionalMarketOracle is IConditionalMarketOracle {
         if (reserve0 == 0 || reserve1 == 0) return;
 
         uint32 timeElapsed = effectiveTs - oracle.lastTimestamp;
-        uint256 rawPrice0 = (reserve1 * Q112) / reserve0;
+        uint256 rawPrice0 = _reservePrice(reserve0, reserve1);
         uint256 price0 = _clampPrice(rawPrice0, oracle.lastPrice0X112);
         unchecked {
             oracle.price0CumulativeLast += price0 * timeElapsed;
@@ -160,7 +161,7 @@ contract ConditionalMarketOracle is IConditionalMarketOracle {
         // block time, and block time only advances.
         uint32 timeElapsed = effectiveTs - oracle.lastTimestamp;
         if (timeElapsed > 0 && reserve0 > 0 && reserve1 > 0) {
-            uint256 rawPrice0 = (reserve1 * Q112) / reserve0;
+            uint256 rawPrice0 = _reservePrice(reserve0, reserve1);
             uint256 price0 = _clampPrice(rawPrice0, oracle.lastPrice0X112);
             unchecked {
                 cumulative += price0 * timeElapsed;
@@ -177,6 +178,13 @@ contract ConditionalMarketOracle is IConditionalMarketOracle {
     // ─────────────────────────────────────────────────────────
     // Internal Functions
     // ─────────────────────────────────────────────────────────
+
+    /// @dev Divide at full precision and cap before mulDiv when even its result would overflow.
+    ///      The integer quotient comparison is exact at the power-of-two saturation boundary.
+    function _reservePrice(uint256 reserve0, uint256 reserve1) internal pure returns (uint256) {
+        if (reserve1 / reserve0 >= MAX_PRICE_X112 / Q112) return MAX_PRICE_X112;
+        return FullMath.mulDiv(reserve1, Q112, reserve0);
+    }
 
     /// @dev Current time capped at the trading-end freeze.
     function _effectiveTimestamp(uint32 tradingEnd) internal view returns (uint32) {
