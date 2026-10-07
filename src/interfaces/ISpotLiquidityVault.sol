@@ -60,6 +60,7 @@ interface ISpotLiquidityVault {
 
     /// @notice Emitted when the protocol's share of crystallized swap fees is swept.
     event ProtocolFeeTaken(address indexed recipient, uint256 ventureAmount, uint256 moneyAmount);
+    event IdleLiquidityAdded(address indexed caller, uint128 liquidityAdded);
 
     /// @notice Emitted when the bootstrap surplus (tokens the pool could not absorb at its
     ///         initial ratio) is forwarded to the venture treasury.
@@ -135,6 +136,10 @@ interface ISpotLiquidityVault {
     /// @notice Return market liquidity to the vault after settlement.
     /// @dev Only callable by UmiaMarketCore. Caller must have approved the vault for the
     ///      provided amounts; the vault pulls them and re-deploys them as full-range liquidity.
+    /// @notice Fold the vault's idle balances into the position while spot is within ~1% of the
+    ///         30-minute TWAP. Reverts `SpotPriceDeviationTooHigh` outside that band.
+    function addIdleLiquidity() external returns (uint128 liquidityAdded);
+
     function returnFromDecisionMarket(uint256 marketId, uint256 ventureAmount, uint256 moneyAmount)
         external
         returns (uint128 liquidityAdded);

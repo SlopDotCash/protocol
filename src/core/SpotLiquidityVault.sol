@@ -71,6 +71,15 @@ contract SpotLiquidityVault is ISpotLiquidityVault, IUnlockCallback, ReentrancyG
     ///         flash-loan sandwiches must move price by >10% to bypass.
     int24 internal constant MAX_TICK_DEVIATION = 1000;
 
+    /// @notice Tighter spot-vs-TWAP band (~1%) for folding idle balances into the position.
+    /// @dev Liquidity added at a displaced spot price and then pushed back loses
+    ///      ΔL·√P·(r−1)²/r to whoever moved it (r = √(P'/P)), and a caller can pick any spot
+    ///      inside `MAX_TICK_DEVIATION` within one transaction. At 100 ticks the round trip's swap
+    ///      fees exceed that loss, so the add stops being sandwichable. Outside the band the
+    ///      balance stays idle — still counted in NAV and paid out pro-rata on withdraw — and is
+    ///      folded later by {addIdleLiquidity} or the next deposit.
+    int24 internal constant MAX_ADD_TICK_DEVIATION = 100;
+
     /// @notice Oracle ring-buffer cardinality seeded at bootstrap; anyone can grow it further
     ///         via the hook's `increaseCardinalityNext`. 2,048 slots cover the 30-minute window
     ///         even at one distinct timestamp per second, with margin.
@@ -360,6 +369,18 @@ contract SpotLiquidityVault is ISpotLiquidityVault, IUnlockCallback, ReentrancyG
         emit Deposit(msg.sender, receiver, ventureUsed, moneyUsed, shares);
     }
 
+    /// @inheritdoc ISpotLiquidityVault
+    /// @dev Permissionless keeper path for idle left by an out-of-band settlement return or
+    ///      deposit. Reverts instead of no-oping outside the band so a keeper can tell.
+    function addIdleLiquidity() external nonReentrant returns (uint128 liquidityAdded) {
+        if (!isPoolInitialized) revert PoolNotInitialized();
+        if (totalDeployedVenture != 0 || totalDeployedMoney != 0) revert WithdrawalsBlockedDuringActiveMarket();
+        _crystallizeFees();
+        if (!_spotWithinTwapDeviation(MAX_ADD_TICK_DEVIATION)) revert SpotPriceDeviationTooHigh();
+        liquidityAdded = _addIdleAsLiquidity();
+        emit IdleLiquidityAdded(msg.sender, liquidityAdded);
+    }
+
     // ─────────────────────────────────────────────────────────
     // LP: Withdraw
     // ─────────────────────────────────────────────────────────
@@ -492,9 +513,10 @@ contract SpotLiquidityVault is ISpotLiquidityVault, IUnlockCallback, ReentrancyG
         }
 
         // Crystallize fees before mixing returned tokens with idle so per-LP fee accounting
-        // doesn't blur. Sandwich guard so the post-settle add-liquidity ratio isn't manipulable.
+        // doesn't blur. No spot guard here: the amounts returned are fixed by the market core,
+        // and the only price-sensitive step — the add — is gated by `_addIdleAsLiquidity`, which
+        // leaves the return idle rather than reverting, so a moved spot can never block settlement.
         _crystallizeFees();
-        _requireSpotWithinTwapDeviation();
 
         // Pull the returned tokens into the vault. Skip zero-amount transferFrom to accommodate
         // ERC20s that reject zero-value transfers.
@@ -584,6 +606,21 @@ contract SpotLiquidityVault is ISpotLiquidityVault, IUnlockCallback, ReentrancyG
     function _requireSpotWithinTwapDeviation() internal view {
         if (currentLiquidity() == 0) return;
         if (!_oracleHasFullWindow(_poolId)) revert InsufficientOracleHistory();
+        if (_spotTwapDeviation() > MAX_TICK_DEVIATION) revert SpotPriceDeviationTooHigh();
+    }
+
+    /// @dev Non-reverting form of the sandwich guard with a caller-chosen band. True for an empty
+    ///      position (nothing to sandwich; the bootstrap add) and false when the oracle cannot
+    ///      serve the full window.
+    function _spotWithinTwapDeviation(int24 maxDeviation) internal view returns (bool) {
+        if (currentLiquidity() == 0) return true;
+        if (!_oracleHasFullWindow(_poolId)) return false;
+        return _spotTwapDeviation() <= maxDeviation;
+    }
+
+    /// @dev Absolute tick distance between spot and the `TWAP_WINDOW` TWAP. Callers ensure the
+    ///      oracle can serve the full window.
+    function _spotTwapDeviation() internal view returns (int24) {
 
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = TWAP_WINDOW;
@@ -593,8 +630,7 @@ contract SpotLiquidityVault is ISpotLiquidityVault, IUnlockCallback, ReentrancyG
 
         (uint160 sqrtPriceX96,,,) = IPoolManager(poolManager).getSlot0(_poolId);
         int24 spotTick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
-        int24 diff = spotTick > twapTick ? spotTick - twapTick : twapTick - spotTick;
-        if (diff > MAX_TICK_DEVIATION) revert SpotPriceDeviationTooHigh();
+        return spotTick > twapTick ? spotTick - twapTick : twapTick - spotTick;
     }
 
     /// @dev Returns true iff the hook's oracle holds at least two distinct observations and the
@@ -622,6 +658,7 @@ contract SpotLiquidityVault is ISpotLiquidityVault, IUnlockCallback, ReentrancyG
     ///      side over-supplies the current pool ratio remains as idle and is picked up by the
     ///      next call. Returns the liquidity units actually added.
     function _addIdleAsLiquidity() internal returns (uint128 liquidityAdded) {
+        if (!_spotWithinTwapDeviation(MAX_ADD_TICK_DEVIATION)) return 0;
         address t0 = ventureIsToken0 ? ventureToken : moneyToken;
         address t1 = ventureIsToken0 ? moneyToken : ventureToken;
         uint256 idle0 = IERC20(t0).balanceOf(address(this));
