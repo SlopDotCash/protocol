@@ -41,10 +41,11 @@ contract SettlementReAddSandwichTest is DecisionMarketBase {
         return t > anchorTick ? t - anchorTick : anchorTick - t;
     }
 
-    /// @dev Same-block buys until spot sits at least `minTicks` from the TWAP anchor.
+    /// @dev Same-block buys until spot sits at least `minTicks` from the TWAP anchor. The fixture
+    ///      pool is thin, so step in 0.01 USDC increments to land inside a band, not leap past it.
     function _pushSpot(int24 minTicks) internal {
-        for (uint256 i; i < 400 && _deviation() < minTicks; ++i) {
-            _swapSpot(venture, 500e6, true);
+        for (uint256 i; i < 2000 && _deviation() < minTicks; ++i) {
+            _swapSpot(venture, 1e4, true);
         }
         assertGe(_deviation(), minTicks, "spot not displaced");
     }
