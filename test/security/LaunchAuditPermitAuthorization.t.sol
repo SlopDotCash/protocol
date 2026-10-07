@@ -88,4 +88,20 @@ contract LaunchAuditPermitAuthorizationTest is LaunchAuditValidationReplayTest {
         hook.validate(0, 10, USER, USER, permit);
         assertFalse(hook.isPermitNonceUsed(NONCE));
     }
+
+    function test_chainChangeRejectsOldDomainAndAcceptsCurrentDomain() public {
+        uint256 chainId = block.chainid;
+        uint256 deadline = block.timestamp + 100;
+        bytes memory oldPermit = _permit(chainId, deadline, PERMIT_KEY);
+        bytes32 oldDomain = hook.DOMAIN_SEPARATOR();
+        vm.chainId(chainId + 1);
+        assertNotEq(hook.DOMAIN_SEPARATOR(), oldDomain);
+        vm.expectRevert(UmiaValidationHook.InvalidSignature.selector);
+        vm.prank(address(cca));
+        hook.validate(0, 10, USER, USER, oldPermit);
+        bytes memory currentPermit = _permit(chainId + 1, deadline, PERMIT_KEY);
+        vm.prank(address(cca));
+        hook.validate(0, 10, USER, USER, currentPermit);
+        assertTrue(hook.isPermitNonceUsed(NONCE));
+    }
 }

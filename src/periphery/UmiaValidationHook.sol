@@ -63,7 +63,11 @@ contract UmiaValidationHook is IUmiaValidationHook, ValidationHookIntrospection,
     // ─────────────────────────────────────────────────────────
 
     /// @notice EIP-712 domain separator (bound to contract address and chain ID)
-    bytes32 public immutable DOMAIN_SEPARATOR;
+    function DOMAIN_SEPARATOR() public view returns (bytes32) {
+        return keccak256(
+            abi.encode(DOMAIN_TYPEHASH, keccak256("UmiaValidationHook"), keccak256("1"), block.chainid, address(this))
+        );
+    }
 
     /// @notice The Reclaim verifier contract
     Reclaim public immutable reclaim;
@@ -192,10 +196,6 @@ contract UmiaValidationHook is IUmiaValidationHook, ValidationHookIntrospection,
         _initializeOwner(_owner);
         reclaim = Reclaim(_reclaim);
         _signer = signer_;
-
-        DOMAIN_SEPARATOR = keccak256(
-            abi.encode(DOMAIN_TYPEHASH, keccak256("UmiaValidationHook"), keccak256("1"), block.chainid, address(this))
-        );
     }
 
     // ─────────────────────────────────────────────────────────
@@ -545,7 +545,7 @@ contract UmiaValidationHook is IUmiaValidationHook, ValidationHookIntrospection,
         if (_usedPermits[nonce]) revert PermitAlreadyUsed(nonce);
 
         bytes32 structHash = keccak256(abi.encode(SERVER_PERMIT_TYPEHASH, user, stepIndex, nonce, deadline, amount));
-        bytes32 digest = MessageHashUtils.toTypedDataHash(DOMAIN_SEPARATOR, structHash);
+        bytes32 digest = MessageHashUtils.toTypedDataHash(DOMAIN_SEPARATOR(), structHash);
 
         // tryRecover (not recover) so a wrong-length or malleable signature reverts this hook's
         // InvalidSignature rather than OpenZeppelin's own ECDSA error.
