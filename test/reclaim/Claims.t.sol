@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {ClaimsHarness} from "./ClaimsHarness.sol";
+import {Claims} from "../../src/reclaim/Claims.sol";
 
 contract ClaimsExtractJsonObjectTest is Test {
     ClaimsHarness internal harness;
@@ -61,5 +62,31 @@ contract ClaimsExtractJsonObjectTest is Test {
         string memory ctx = '{"extractedParameters":"oops"}';
         bytes memory got = harness.extractJsonObjectFromContext(ctx, TARGET);
         assertEq(got.length, 0);
+    }
+
+    // Client-supplied nested objects appear unescaped in the signed (key-sorted) context.
+    // A first-substring match would let a prover spoof the provider hash and the OPRF identity.
+
+    function test_ignoresNestedSpoofedExtractedParameters() public view {
+        string memory ctx = '{"a":{"extractedParameters":{"id":"fake"}},"extractedParameters":{"id":"real"},"providerHash":"0xreal"}';
+        bytes memory got = harness.extractJsonObjectFromContext(ctx, TARGET);
+        assertEq(string(got), '{"id":"real"}');
+    }
+
+    function test_ignoresNestedSpoofedProviderHash() public pure {
+        string memory ctx = '{"a":{"providerHash":"0xfake"},"contextAddress":"0xabc","providerHash":"0xreal"}';
+        assertEq(Claims.extractFieldFromContext(ctx, '"providerHash":"'), "0xreal");
+    }
+
+    function test_ignoresSpoofedKeyInsideArrayAndString() public pure {
+        string memory ctx =
+            '{"a":[{"providerHash":"0xfake"}],"b":"\\"providerHash\\":\\"0xfake2","providerHash":"0xreal"}';
+        assertEq(Claims.extractFieldFromContext(ctx, '"providerHash":"'), "0xreal");
+    }
+
+    function test_nestedOnlyKeyIsNotFound() public view {
+        string memory ctx = '{"a":{"extractedParameters":{"id":"fake"}},"providerHash":"0xreal"}';
+        assertEq(harness.extractJsonObjectFromContext(ctx, TARGET).length, 0);
+        assertEq(bytes(Claims.extractFieldFromContext(ctx, '"contextAddress":"')).length, 0);
     }
 }

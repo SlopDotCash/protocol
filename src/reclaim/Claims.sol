@@ -103,25 +103,9 @@ library Claims {
         bytes memory targetBytes = bytes(target);
 
         require(dataBytes.length >= targetBytes.length, "target is longer than data");
-        uint256 start = 0;
-        bool foundStart = false;
-        // Find start of "contextMessage":"
-
-        for (uint256 i = 0; i <= dataBytes.length - targetBytes.length; i++) {
-            bool isMatch = true;
-
-            for (uint256 j = 0; j < targetBytes.length && isMatch; j++) {
-                if (dataBytes[i + j] != targetBytes[j]) {
-                    isMatch = false;
-                }
-            }
-
-            if (isMatch) {
-                start = i + targetBytes.length; // Move start to the end of "contextMessage":"
-                foundStart = true;
-                break;
-            }
-        }
+        // Only a key of the top-level context object counts: nested objects are client-supplied and
+        // appear unescaped in the signed context, so a first-substring match could be spoofed.
+        (uint256 start, bool foundStart) = _findTopLevelKey(dataBytes, targetBytes);
 
         if (!foundStart) {
             return ""; // Malformed or missing message
@@ -166,21 +150,7 @@ library Claims {
 
         if (dataBytes.length < targetBytes.length) return "";
 
-        uint256 start = 0;
-        bool foundStart = false;
-        for (uint256 i = 0; i <= dataBytes.length - targetBytes.length; i++) {
-            bool isMatch = true;
-            for (uint256 j = 0; j < targetBytes.length && isMatch; j++) {
-                if (dataBytes[i + j] != targetBytes[j]) {
-                    isMatch = false;
-                }
-            }
-            if (isMatch) {
-                start = i + targetBytes.length;
-                foundStart = true;
-                break;
-            }
-        }
+        (uint256 start, bool foundStart) = _findTopLevelKey(dataBytes, targetBytes);
         if (!foundStart) return "";
 
         // Skip optional whitespace between the colon and the opening brace.
@@ -225,5 +195,49 @@ library Claims {
         }
         return out;
     }
-}
 
+    /// @notice Finds `target` (a `"key":` token, starting with a quote) as a key of the top-level JSON
+    ///         object in `data` and returns the index just past it.
+    /// @dev Tracks brace/bracket depth and JSON string state, so a match nested inside a client-supplied
+    ///      object or array, or inside a string value, is skipped. A quote seen outside a string at
+    ///      depth 1 can only open a key or a top-level string value, and a string value is never
+    ///      followed by `:`, so the `"key":` token identifies a top-level key exactly.
+    function _findTopLevelKey(bytes memory dataBytes, bytes memory targetBytes)
+        private
+        pure
+        returns (uint256 start, bool found)
+    {
+        uint256 depth = 0;
+        bool inStr = false;
+        bool escaped = false;
+        for (uint256 i = 0; i < dataBytes.length; i++) {
+            bytes1 ch = dataBytes[i];
+            if (inStr) {
+                if (escaped) {
+                    escaped = false;
+                } else if (ch == "\\") {
+                    escaped = true;
+                } else if (ch == '"') {
+                    inStr = false;
+                }
+                continue;
+            }
+            if (ch == '"') {
+                if (depth == 1 && i + targetBytes.length <= dataBytes.length) {
+                    bool isMatch = true;
+                    for (uint256 j = 0; j < targetBytes.length && isMatch; j++) {
+                        if (dataBytes[i + j] != targetBytes[j]) isMatch = false;
+                    }
+                    if (isMatch) return (i + targetBytes.length, true);
+                }
+                inStr = true;
+            } else if (ch == "{" || ch == "[") {
+                depth++;
+            } else if (ch == "}" || ch == "]") {
+                if (depth == 0) return (0, false);
+                depth--;
+            }
+        }
+        return (0, false);
+    }
+}

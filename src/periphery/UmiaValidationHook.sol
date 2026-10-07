@@ -127,6 +127,10 @@ contract UmiaValidationHook is IUmiaValidationHook, ValidationHookIntrospection,
     ///         its nonce is burned and the signature cannot be replayed.
     mapping(bytes32 nonce => bool) private _usedPermits;
 
+    /// @notice Replay protection belongs to this application, not the public Reclaim verifier.
+    ///         Retaining consumption after unregister prevents an old proof undoing revocation.
+    mapping(bytes32 identifier => bool) private _usedProofs;
+
     // ─────────────────────────────────────────────────────────
     // Errors
     // ─────────────────────────────────────────────────────────
@@ -155,6 +159,7 @@ contract UmiaValidationHook is IUmiaValidationHook, ValidationHookIntrospection,
     error PriceNotAlignedToTick();
     error IdentityAlreadyClaimed(bytes32 providerHash, bytes32 identityHash, address existingUser);
     error PermitAlreadyUsed(bytes32 nonce);
+    error ProofAlreadyUsed(bytes32 identifier);
     error ZkBidExceedsStepCap(address owner, uint256 stepIndex, uint256 attempted, uint256 cap);
     error ZkBidExceedsGlobalCap(address owner, uint256 attempted, uint256 cap);
 
@@ -350,6 +355,7 @@ contract UmiaValidationHook is IUmiaValidationHook, ValidationHookIntrospection,
     /// @dev Verifies proof with Reclaim and stores verification status
     function _verifyAndStoreProof(address user, uint256 stepIndex, bytes calldata proofData) internal {
         Reclaim.Proof memory proof = abi.decode(proofData, (Reclaim.Proof));
+        bytes32 identifier = proof.signedClaim.claim.identifier;
 
         string memory contextAddress = Claims.extractFieldFromContext(proof.claimInfo.context, '"contextAddress":"');
         address proofUser = StringUtils.str2address(contextAddress);
@@ -390,7 +396,9 @@ contract UmiaValidationHook is IUmiaValidationHook, ValidationHookIntrospection,
             // existingOwner == user → idempotent re-verify, no-op.
         }
 
+        if (_usedProofs[identifier]) revert ProofAlreadyUsed(identifier);
         reclaim.verifyProof(proof);
+        _usedProofs[identifier] = true;
 
         uint256 newValue = stepIndex + 1;
         uint256 existing = _verifiedFromStep[user];

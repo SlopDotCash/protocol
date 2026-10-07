@@ -71,12 +71,19 @@ contract Reclaim {
     uint32 public currentEpoch;
 
     /**
-     * mapping to track used proofs (prevents replay attacks)
+     * Informational record of previously verified claim identifiers.
+     * Verification is intentionally repeatable: any caller may verify a proof,
+     * so consuming it here would let strangers deny its use by an application.
+     * Applications must enforce their own user/action-specific replay policy.
      */
     mapping(bytes32 => bool) public usedProofs;
 
+    /// @notice Revoked epochs can no longer authenticate any proof, including backdated proofs.
+    mapping(uint32 => bool) public revokedEpochs;
+
     event EpochAdded(Epoch epoch);
     event ProofUsed(bytes32 indexed identifier);
+    event EpochRevoked(uint32 indexed epoch);
     address public owner;
 
     /**
@@ -170,9 +177,18 @@ contract Reclaim {
      * the validity of several claims proofs
      */
     function verifyProof(Proof memory proof) public {
-        // check if the proof has already been used
         bytes32 proofIdentifier = proof.signedClaim.claim.identifier;
-        require(!usedProofs[proofIdentifier], "Proof already used");
+        uint32 proofEpoch = proof.signedClaim.claim.epoch;
+        require(proofEpoch > 0 && proofEpoch <= currentEpoch, "Invalid proof epoch");
+        require(!revokedEpochs[proofEpoch], "Epoch revoked");
+        Epoch storage epoch = epochs[proofEpoch - 1];
+        uint32 proofTimestamp = proof.signedClaim.claim.timestampS;
+        require(proofTimestamp >= epoch.timestampStart && proofTimestamp <= block.timestamp, "Invalid proof timestamp");
+        // The current epoch's end is an advisory cache duration, not a hard expiry.
+        // Rotation finalizes the predecessor's end and retires its witnesses.
+        if (proofEpoch < currentEpoch) {
+            require(proofTimestamp <= epoch.timestampEnd, "Proof after epoch ended");
+        }
 
         // create signed claim using claimData and signature.
         require(proof.signedClaim.signatures.length > 0, "No signatures");
@@ -212,12 +228,20 @@ contract Reclaim {
             require(found, "Signature not appropriate");
         }
 
-        // mark the proof as used
+        // Record successful verification without consuming the proof globally.
         usedProofs[proofIdentifier] = true;
         emit ProofUsed(proofIdentifier);
     }
 
     // admin functions ---
+
+    /// @notice Permanently revoke a compromised epoch, including all historical proofs.
+    /// @dev Rotate to a fresh witness set before revoking the current epoch.
+    function revokeEpoch(uint32 epoch) external onlyOwner {
+        require(epoch > 0 && epoch <= currentEpoch, "Invalid proof epoch");
+        revokedEpochs[epoch] = true;
+        emit EpochRevoked(epoch);
+    }
 
     /**
      * @dev Add a new epoch

@@ -31,6 +31,9 @@ One hook per gated auction. The CCA takes its `validationHook` as an immutable c
 - `_stepPermitEnabledBitmap` (which steps accept server permits)
 - `_verifiedFromStep[user]` (per-user verification status, 1-indexed)
 - `_stepProviderHashes[stepIndex]` (required Reclaim provider hashes per step)
+- `_usedProofs[identifier]` (hook-local proof consumption; retained after unregister so replaying
+  an old proof cannot restore registration). Public Reclaim verification is repeatable and does not
+  consume the application's registration authorization.
 - `_signer` (authorized EIP-712 permit signer)
 - `_maxBidPrice` (optional bid price cap in Q96 format)
 - `_identityToUser[providerHash][identityHash]` (OPRF sybil gate)

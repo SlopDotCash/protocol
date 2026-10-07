@@ -166,6 +166,7 @@ contract ReclaimTest is Test {
     }
 
     function test_VerifyRealWorldProof() public {
+        vm.warp(1721386619);
         // Real-world proof from Reclaim Protocol
         Claims.ClaimInfo memory claimInfo = Claims.ClaimInfo({
             provider: "http",
@@ -196,7 +197,7 @@ contract ReclaimTest is Test {
         reclaim.verifyProof(proof);
     }
 
-    function test_VerifyProofRevertAlreadyUsed() public {
+    function test_VerifyProofMayBeVerifiedAgainByApplication() public {
         // Setup: Add epoch with our test witness
         Reclaim.Witness[] memory witnesses = new Reclaim.Witness[](1);
         witnesses[0] = Reclaim.Witness({addr: witnessAddress, host: "wss://test.example.com"});
@@ -240,8 +241,7 @@ contract ReclaimTest is Test {
         // First verification should succeed
         reclaim.verifyProof(proof);
 
-        // Second verification with same proof should fail
-        vm.expectRevert("Proof already used");
+        // Public verification must not consume an application's proof.
         reclaim.verifyProof(proof);
     }
 
