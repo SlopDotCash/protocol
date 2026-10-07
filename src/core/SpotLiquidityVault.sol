@@ -337,8 +337,16 @@ contract SpotLiquidityVault is ISpotLiquidityVault, IUnlockCallback, ReentrancyG
 
         if (shares < minSharesOut) revert InsufficientSharesMinted(shares, minSharesOut);
 
+        // Shares are priced from these exact contributions. Reject transfer taxes rather than
+        // issuing shares backed by another LP's assets.
+        uint256 ventureBefore = IERC20(ventureToken).balanceOf(address(this));
+        uint256 moneyBefore = IERC20(moneyToken).balanceOf(address(this));
         if (ventureUsed > 0) IERC20(ventureToken).safeTransferFrom(msg.sender, address(this), ventureUsed);
         if (moneyUsed > 0) IERC20(moneyToken).safeTransferFrom(msg.sender, address(this), moneyUsed);
+        if (
+            IERC20(ventureToken).balanceOf(address(this)) - ventureBefore != ventureUsed
+                || IERC20(moneyToken).balanceOf(address(this)) - moneyBefore != moneyUsed
+        ) revert InvalidAmount();
 
         // Fold the LP's contribution (and any pre-existing idle) into the pool position. Whatever
         // the pool can't absorb at the current ratio stays as idle and contributes to the next

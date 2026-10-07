@@ -530,13 +530,18 @@ contract UmiaMarketCore is Initializable, UUPSUpgradeable, ReentrancyGuard, IUmi
         uint256[] storage proposalIds = market.proposalIds;
 
         if (moneyAmount > 0) {
-            HUB.ventureMoneyTokenById(ventureId).safeTransferFrom(user, address(this), moneyAmount);
+            address moneyToken = HUB.ventureMoneyTokenById(ventureId);
+            uint256 moneyBefore = moneyToken.balanceOf(address(this));
+            moneyToken.safeTransferFrom(user, address(this), moneyAmount);
+            if (moneyToken.balanceOf(address(this)) - moneyBefore != moneyAmount) revert InvariantViolation();
             _settle[marketId].realMoneyBalance += moneyAmount;
         }
         if (ventureAmount > 0) {
             address ventureToken = HUB.ventureTokenById(ventureId);
             if (ventureToken == address(0)) revert VentureNotFound();
+            uint256 ventureBefore = ventureToken.balanceOf(address(this));
             ventureToken.safeTransferFrom(user, address(this), ventureAmount);
+            if (ventureToken.balanceOf(address(this)) - ventureBefore != ventureAmount) revert InvariantViolation();
             _settle[marketId].realVentureBalance += ventureAmount;
         }
 
