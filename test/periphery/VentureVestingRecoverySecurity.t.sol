@@ -253,4 +253,44 @@ contract VentureVestingRecoverySecurityTest is Test {
         assertEq(token.balanceOf(address(freshAdapter)), 0);
         assertEq(token.allowance(address(freshAdapter), address(fresh)), 0);
     }
+
+    function test_vendorAliasDemonstratesWhyCreationMustReject() public {
+        metavestController rawController = new metavestController(
+            address(this),
+            address(this),
+            address(new VestingAllocationFactory()),
+            address(new TokenOptionFactory()),
+            address(new RestrictedTokenFactory())
+        );
+        uint48 startTime = uint48(vm.getBlockTimestamp() + 1 days);
+        BaseAllocation.Allocation memory allocation = BaseAllocation.Allocation({
+            tokenStreamTotal: 1_000 ether,
+            vestingCliffCredit: 0,
+            unlockingCliffCredit: 0,
+            vestingRate: 1 ether,
+            vestingStartTime: startTime,
+            unlockRate: 1 ether,
+            unlockStartTime: startTime,
+            tokenContract: address(token)
+        });
+        token.mint(address(this), 1_000 ether);
+        token.approve(address(rawController), 1_000 ether);
+        address rawGrant = rawController.createMetavest(
+            metavestController.metavestType.RestrictedTokenAward,
+            GRANTEE,
+            allocation,
+            new BaseAllocation.Milestone[](0),
+            1 ether,
+            address(token),
+            1 days,
+            0
+        );
+        assertLt(vm.getBlockTimestamp(), startTime);
+        assertEq(token.balanceOf(rawGrant), 1_000 ether);
+        vm.prank(GRANTEE);
+        RestrictedTokenAward(rawGrant).claimRepurchasedTokens();
+        // The pinned vendor transfers all collateral before vesting begins. Adapter creation rejects it.
+        assertEq(token.balanceOf(GRANTEE), 1_000 ether);
+        assertEq(token.balanceOf(rawGrant), 0);
+    }
 }

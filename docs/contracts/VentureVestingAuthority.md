@@ -162,3 +162,5 @@ At genesis the operator deploys the adapter, hands authority, funds grants (with
 and creates grants (with their ladders) through `forward` (§8.2). The `UmiaTwapMilestoneCondition`
 singleton resolves each milestone's threshold from this adapter at check time; there is no separate
 registration or finalize step. See [the MetaVesT integration doc](../metavest/README.md) (authority model + adapter).
+
+Restricted-token grant creation rejects `paymentToken == allocation.tokenContract` with `PaymentTokenMatchesAllocationToken`. The vendor otherwise makes all collateral freely claimable as repurchase payments before vesting. The check applies to genesis funding, normal creation and replacement grants and reverts the whole creation/funding transaction. Recovery accepts any recorded funding token, including a non-venture genesis grant; the recorded token identity and allocation type must still match.

@@ -6,7 +6,8 @@ This record is pending final source acceptance. The audit baseline is `ac59fdff2
 - Clean isolated Claims parser regressions: 12 passed, zero failed.
 - Combined launch/Reclaim/vesting snapshot: 100 passed, zero failed.
 - Exact SDK exports: all 24 typed ABI arrays matched raw exports at the export snapshot; TypeScript check passed.
-- Independent oracle arithmetic: sub-agent checked 20,000 exact partition identities; Solidity partition/lifecycle tests remain in the suite.
+- Restricted/option collateral recovery, non-venture grants, same-token creation rejection, and real vendor bypass evidence: 13 passed, zero failed.
+- Independent oracle arithmetic: primary and sub-agent independently checked 20,000 exact partition identities; Solidity partition/lifecycle tests remain in the suite.
 - Hub canonical-asset migration, reversible-pause ordering, expiry boundaries and legacy supersession regressions: 15 passed, zero failed, in a clean dependency snapshot.
 - Hub upgrade layout: all baseline field slots, offsets and widths preserved; new token mappings consume gap slots 19 and 20.
 - Current Solidity source ABI compilation: all 24 public export arrays rebuilt with Solidity 0.8.26 and typechecked.
