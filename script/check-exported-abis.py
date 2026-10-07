@@ -5,7 +5,9 @@ from pathlib import Path
 import re
 
 root = Path(__file__).resolve().parents[1]
-names = re.findall(r'"([A-Z][A-Za-z0-9]+)"', (root / 'abi/src/contracts.ts').read_text())
+names = re.findall(r'''["']([A-Z][A-Za-z0-9]+)["']''', (root / 'abi/src/contracts.ts').read_text())
+if not names or len(names) != len(set(names)):
+    raise SystemExit('Contract ABI manifest is empty or contains duplicate names')
 
 def normalized(abi):
     # Solidity's item ordering is not ABI semantics; parameter/component ordering is.

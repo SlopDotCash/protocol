@@ -5,6 +5,7 @@ cd "$(dirname "$0")"
 
 # EIP-170 contract size limit (bytes)
 MAX_SIZE=24576
+MAX_INIT_SIZE=49152
 
 # Core contracts that must stay under the size limit.
 # Add any deployable contract that is at risk of exceeding the limit.
@@ -29,6 +30,8 @@ CONTRACTS=(
     "ConditionalMarketOracle"
     "SimpleLiquidator"
     "Reclaim"
+    "VentureProxy"
+    "Claims"
 )
 
 failed=0
@@ -45,6 +48,15 @@ for contract in "${CONTRACTS[@]}"; do
         failed=1
     else
         echo "OK:   $contract — $size bytes (margin: $margin bytes)"
+    fi
+    creation=$(forge inspect "$contract" bytecode)
+    creation_hex="${creation#0x}"
+    creation_size=$(( ${#creation_hex} / 2 ))
+    if [ "$creation_size" -gt "$MAX_INIT_SIZE" ]; then
+        echo "FAIL: $contract initcode — $creation_size bytes (limit $MAX_INIT_SIZE)"
+        failed=1
+    else
+        echo "OK:   $contract initcode — $creation_size bytes"
     fi
 done
 
