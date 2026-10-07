@@ -21,6 +21,16 @@ interface IUmiaLBPFactoryView {
     function isLBP(address account) external view returns (bool);
 }
 
+/// @dev Minimal views used to gate swaps on the venture token's pause state, declared locally for
+///      the same reason as `IUmiaLBPFactoryView`.
+interface IUmiaHookVaultView {
+    function ventureToken() external view returns (address);
+}
+
+interface IUmiaHookPausableView {
+    function paused() external view returns (bool);
+}
+
 /// @title UmiaHook
 /// @notice Singleton Uniswap V4 hook serving every Umia LBP pool on a given chain.
 /// @dev One canonical address per chain. Mined via CreateX.
@@ -302,6 +312,11 @@ contract UmiaHook is IHooks, IUmiaHook {
         onlyPoolManager
         returns (bytes4, BeforeSwapDelta, uint24)
     {
+        // While the venture token is paused, ERC20 transfers revert, but the pool could still be
+        // traded through ERC6909 claims. Only the buyer would then hold sellable inventory, so a
+        // pumped price could not be arbitraged back and the spot TWAP (which gates milestone
+        // vesting) would read it for the whole pause. The pool stays frozen until trading starts.
+        if (_ventureTokenPaused(key.toId())) revert TradingPaused();
         _writeObservation(key);
         return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
@@ -485,6 +500,12 @@ contract UmiaHook is IHooks, IUmiaHook {
         old = state.cardinalityNext;
         updated = ring.grow(old, next);
         state.cardinalityNext = updated;
+    }
+
+    /// @dev Resolved through the operator vault's immutable `ventureToken`, not the upgradeable venture.
+    function _ventureTokenPaused(PoolId id) internal view returns (bool) {
+        address token = IUmiaHookVaultView(pools[id].operator).ventureToken();
+        return IUmiaHookPausableView(token).paused();
     }
 
     function _writeObservation(PoolKey calldata key) internal {

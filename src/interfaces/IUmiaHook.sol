@@ -68,6 +68,8 @@ interface IUmiaHook {
     error InvalidInitialOwner();
     /// @notice `registerPool` received a PoolKey whose `hooks` field is not this hook.
     error InvalidHooksAddress(address provided, address expected);
+    /// @notice Swap attempted while the pool's venture token is paused.
+    error TradingPaused();
 
     // ─────────────────────────────────────────────────────────
     // Events

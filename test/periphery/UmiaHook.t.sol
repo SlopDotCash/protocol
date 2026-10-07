@@ -257,6 +257,9 @@ contract UmiaHookBeforeInitializeTest is Test {
         vm.mockCall(FACTORY, abi.encodeWithSelector(IFactoryMock.isLBP.selector, LBP), abi.encode(true));
         vm.prank(LBP);
         hook.registerPool(key, IUmiaHook.PoolConfig({launcher: LBP, venture: VENTURE, operator: OPERATOR}));
+        // beforeSwap reads the operator vault's venture token pause state.
+        vm.mockCall(OPERATOR, abi.encodeWithSignature("ventureToken()"), abi.encode(address(0x11)));
+        vm.mockCall(address(0x11), abi.encodeWithSignature("paused()"), abi.encode(false));
     }
 
     function test_BeforeInitialize_AcceptsRegisteredLauncher() public {
@@ -327,6 +330,9 @@ contract UmiaHookOracleTest is Test {
         vm.mockCall(FACTORY, abi.encodeWithSelector(IFactoryMock.isLBP.selector, LBP), abi.encode(true));
         vm.prank(LBP);
         hook.registerPool(key, IUmiaHook.PoolConfig({launcher: LBP, venture: VENTURE, operator: OPERATOR}));
+        // beforeSwap reads the operator vault's venture token pause state.
+        vm.mockCall(OPERATOR, abi.encodeWithSignature("ventureToken()"), abi.encode(address(0x11)));
+        vm.mockCall(address(0x11), abi.encodeWithSignature("paused()"), abi.encode(false));
     }
 
     function test_AfterInitialize_SeedsOracle() public {
@@ -419,6 +425,9 @@ contract UmiaHookBeforeAddLiquidityTest is Test {
         vm.mockCall(FACTORY, abi.encodeWithSelector(IFactoryMock.isLBP.selector, LBP), abi.encode(true));
         vm.prank(LBP);
         hook.registerPool(key, IUmiaHook.PoolConfig({launcher: LBP, venture: VENTURE, operator: OPERATOR}));
+        // beforeSwap reads the operator vault's venture token pause state.
+        vm.mockCall(OPERATOR, abi.encodeWithSignature("ventureToken()"), abi.encode(address(0x11)));
+        vm.mockCall(address(0x11), abi.encodeWithSignature("paused()"), abi.encode(false));
 
         vm.prank(POOL_MANAGER);
         hook.afterInitialize(LBP, key, uint160(1 << 96), int24(0));
@@ -500,6 +509,9 @@ contract UmiaHookBeforeRemoveLiquidityTest is Test {
         vm.mockCall(FACTORY, abi.encodeWithSelector(IFactoryMock.isLBP.selector, LBP), abi.encode(true));
         vm.prank(LBP);
         hook.registerPool(key, IUmiaHook.PoolConfig({launcher: LBP, venture: VENTURE, operator: OPERATOR}));
+        // beforeSwap reads the operator vault's venture token pause state.
+        vm.mockCall(OPERATOR, abi.encodeWithSignature("ventureToken()"), abi.encode(address(0x11)));
+        vm.mockCall(address(0x11), abi.encodeWithSignature("paused()"), abi.encode(false));
 
         vm.prank(POOL_MANAGER);
         hook.afterInitialize(LBP, key, uint160(1 << 96), int24(0));
@@ -570,6 +582,9 @@ contract UmiaHookBeforeSwapTest is Test {
         vm.mockCall(FACTORY, abi.encodeWithSelector(IFactoryMock.isLBP.selector, LBP), abi.encode(true));
         vm.prank(LBP);
         hook.registerPool(key, IUmiaHook.PoolConfig({launcher: LBP, venture: VENTURE, operator: OPERATOR}));
+        // beforeSwap reads the operator vault's venture token pause state.
+        vm.mockCall(OPERATOR, abi.encodeWithSignature("ventureToken()"), abi.encode(address(0x11)));
+        vm.mockCall(address(0x11), abi.encodeWithSignature("paused()"), abi.encode(false));
 
         vm.prank(POOL_MANAGER);
         hook.afterInitialize(LBP, key, uint160(1 << 96), int24(0));
@@ -591,6 +606,16 @@ contract UmiaHookBeforeSwapTest is Test {
 
         (uint32 ts,,,) = hook.getObservation(key.toId(), 0);
         assertEq(ts, uint32(block.timestamp));
+    }
+
+    function test_BeforeSwap_RevertsWhileVentureTokenPaused() public {
+        vm.mockCall(address(0x11), abi.encodeWithSignature("paused()"), abi.encode(true));
+        SwapParams memory params =
+            SwapParams({zeroForOne: true, amountSpecified: -1 ether, sqrtPriceLimitX96: uint160(1 << 90)});
+        vm.warp(block.timestamp + 12);
+        vm.prank(POOL_MANAGER);
+        vm.expectRevert(IUmiaHook.TradingPaused.selector);
+        hook.beforeSwap(LBP, key, params, "");
     }
 
     /// @notice `afterSwap` is a permissioned no-op: the hook takes no swap-time delta, so swap
@@ -644,6 +669,9 @@ contract UmiaHookCoarseOracleTest is Test {
         vm.mockCall(FACTORY, abi.encodeWithSelector(IFactoryMock.isLBP.selector, LBP), abi.encode(true));
         vm.prank(LBP);
         hook.registerPool(key, IUmiaHook.PoolConfig({launcher: LBP, venture: VENTURE, operator: OPERATOR}));
+        // beforeSwap reads the operator vault's venture token pause state.
+        vm.mockCall(OPERATOR, abi.encodeWithSignature("ventureToken()"), abi.encode(address(0x11)));
+        vm.mockCall(address(0x11), abi.encodeWithSignature("paused()"), abi.encode(false));
 
         vm.warp(T0);
         vm.prank(POOL_MANAGER);

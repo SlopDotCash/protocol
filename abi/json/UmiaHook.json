@@ -115,6 +115,11 @@
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "TradingPaused",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",

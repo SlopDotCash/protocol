@@ -95,6 +95,8 @@ contract UmiaLBPOracleTest is Test, PosmTestSetup {
         sweepBlock = migrationBlock + 200;
 
         vm.mockCall(VENTURE, abi.encodeWithSelector(ILBPMigrationCallback.onLBPMigrated.selector), abi.encode());
+        // UmiaHook.beforeSwap gates on the venture token's pause state; this mock token is never paused.
+        vm.mockCall(address(token), abi.encodeWithSignature("paused()"), abi.encode(false));
 
         _deployAndMigrate();
     }

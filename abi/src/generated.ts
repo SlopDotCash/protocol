@@ -1632,6 +1632,7 @@ export const umiaHookAbi = [
     ],
     name: 'TargetPredatesOldestObservation',
   },
+  { type: 'error', inputs: [], name: 'TradingPaused' },
   {
     type: 'error',
     inputs: [
