@@ -5,8 +5,9 @@ Source: `src/periphery/VentureVestingAuthority.sol`
 ## Purpose
 
 A per-venture adapter that holds a [MetaVesT](../metavest/README.md) controller's
-`authority` role and routes it to the venture treasury, so that **after launch only futarchy can
-create / amend / terminate vesting allocations**. The launch operator (ADMIN) deploys it before the
+`authority` role and routes general grant creation and amendments to the venture treasury through
+futarchy. The Hub's optional vesting administrator may also terminate or reissue existing grants
+unless the venture revokes that path; those actions are disabled during liquidation. The launch operator (ADMIN) deploys it before the
 venture exists, hands the controller authority to it **before genesis grants**, funds each grant via
 `fundGenesisGrant`, closes genesis with `closeGenesis`, and binds it to the treasury after launch.
 
@@ -33,9 +34,13 @@ authority`); there is no separate ladder-registration step and no finalize/ancho
 - **`bind` is deployer-gated and write-once** — only the deployer (the launch operator) can bind,
   exactly once, and the treasury is resolved from `UmiaHub.ventureById(id).venture` rather than taken
   from caller input.
-- **`forward` is gated to the treasury** — the only mutating path post-launch. A passed market reaches
+- **`forward` is gated to the treasury** — the general controller-call path post-launch. A passed market reaches
   it via `Venture.executeCall`. Emits `AllocationFunded` and registers the price ladder when calldata
   is `createMetavest`; `priceProgram.kind` must be `None` for non-`createMetavest` calls.
+- **Price-program milestone indices are immutable** — `forward` rejects milestone addition or
+  removal on a registered price ladder. MetaVesT removal moves the final award into the removed
+  index, which would associate it with the wrong threshold and cliff. Use `terminateAndReissue`
+  with a complete replacement grant and ladder to change its milestone structure.
 - **Atomic price-ladder registry** — a grant's ladder is written in the same transaction as the grant.
   The condition resolves thresholds back from this adapter, so there is one write path and one auth
   gate for grants and ladders, and no separate registration on the condition.
@@ -99,12 +104,22 @@ ladders alike.
   grant and register its price ladder atomically; emits `AllocationFunded` and, for a non-`None`
   ladder, `PriceProgramRegistered`. Deployer-gated, pre-`bind`. Any over-funded remainder (`amount`
   above the grant total the controller pulls) is returned to the deployer.
-- `forward(data, priceProgram)` — forward an authority call (`createMetavest` / amend / terminate) to
+- `forward(data, priceProgram)` — forward an authority call (`createMetavest` / supported amendment) to
   the controller, and register the price ladder when the call is `createMetavest`. Gated to the bound
   treasury, so only futarchy drives it. `priceProgram.kind` must be `None` for non-`createMetavest`
-  calls (else `InvalidPriceProgram`).
+  calls (else `InvalidPriceProgram`). Authority transfers and direct termination are forbidden;
+  termination uses `terminateGrant`. Registered price ladders reject milestone addition/removal
+  with `PriceProgramMilestoneMutationForbidden`.
 - `closeGenesis()` — permanently close the genesis funding window; emits `GenesisSealed` and reverts
   if already closed.
+- `recoverForfeitedOptions(allocation)` — treasury-only recovery of expired, unexercised option
+  collateral from an allocation funded through this adapter. The grant enforces termination and
+  its exercise deadline; recovered venture tokens return to the treasury.
+- `repurchaseRestrictedTokens(allocation, amount)` — treasury-only restricted-token repurchase.
+  Governance must fund the adapter with the payment token in the same transaction. The adapter
+  approves only the quoted payment, clears approval afterward, and returns recovered venture tokens
+  and unused payment to the treasury. Both recovery methods reject liquidation and allocations of
+  the wrong type or token, and cannot adopt grants funded through another adapter.
 - `bind(ventureId)` — resolve the treasury from the Hub and lock it in (deployer-gated, write-once),
   and grant the controller a standing allowance of the venture token. Emits
   `Bound(ventureId, treasury, token)`.

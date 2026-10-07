@@ -40,6 +40,8 @@ interface IVentureVestingAuthority {
     ///      condition resolves its price-ladder registry via `controller.authority()`, so the adapter
     ///      must hold authority for the venture's life or every price milestone breaks.
     error AuthorityTransferForbidden();
+    /// @dev Price ladders use immutable milestone indices; add/remove must use a replacement grant.
+    error PriceProgramMilestoneMutationForbidden();
     /// @dev A forwarded call tried to terminate a grant. That path leaves the clawback parked on the
     ///      adapter; use {terminateGrant}, which the treasury may also call and which sweeps.
     error UseTerminateGrant();

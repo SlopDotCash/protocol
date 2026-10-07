@@ -77,6 +77,9 @@ contract VentureVestingAuthority is IVentureVestingAuthority {
 
     /// @dev Canonical ABI signature for `metavestController.terminateMetavestVesting(address)`.
     bytes4 private constant TERMINATE_VESTING_SELECTOR = bytes4(keccak256("terminateMetavestVesting(address)"));
+    bytes4 private constant REMOVE_MILESTONE_SELECTOR = bytes4(keccak256("removeMetavestMilestone(address,uint256)"));
+    bytes4 private constant ADD_MILESTONE_SELECTOR =
+        bytes4(keccak256("addMetavestMilestone(address,(uint256,bool,bool,address[]))"));
 
     /// @dev Fixed-point scale for relative multiples (2x == 2_000_000), matching the grant builder.
     uint256 private constant MULTIPLE_SCALE = 1e6;
@@ -195,6 +198,17 @@ contract VentureVestingAuthority is IVentureVestingAuthority {
         // Terminating this way would leave the clawback parked on the adapter. `terminateGrant`
         // accepts the treasury and sweeps, so routing every terminate through it costs nothing.
         if (data.length >= 4 && bytes4(data[0:4]) == TERMINATE_VESTING_SELECTOR) revert UseTerminateGrant();
+        // MetaVesT removal swap-pops the final milestone into the removed index. Our write-once
+        // ladder would then apply the removed milestone's threshold/cliff to that different award.
+        // Appending cannot register a matching threshold either. Replace the grant atomically via
+        // terminateAndReissue when changing a price program's milestone structure.
+        if (
+            data.length >= 4
+                && (bytes4(data[0:4]) == REMOVE_MILESTONE_SELECTOR || bytes4(data[0:4]) == ADD_MILESTONE_SELECTOR)
+        ) {
+            address allocation = abi.decode(data[4:], (address));
+            if (_programs[allocation].kind != PriceProgramKind.None) revert PriceProgramMilestoneMutationForbidden();
+        }
         // A ladder may only ride a grant-creation call; amend/terminate forward with `kind == None`.
         if (!isCreate && priceProgram.kind != PriceProgramKind.None) revert InvalidPriceProgram();
 
